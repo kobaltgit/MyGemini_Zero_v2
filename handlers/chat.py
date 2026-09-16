@@ -189,12 +189,33 @@ async def handle_user_message(message: Message, bot: Bot):
 
     system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
 
-    # 8. Start streaming response
+    # 8. Build context header (Dialog, Persona, Model)
+    async with async_session_maker() as session:
+        dialog_repo = DialogRepository(session)
+        active_d = await dialog_repo.get_by_id(active_dialog_id)
+        dialog_title = active_d.name if active_d else "Основной диалог"
+
+    persona_data = BOT_PERSONAS.get(persona_key, {})
+    persona_title = persona_data.get("name_ru", persona_key)
+    model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
+
+    context_header = (
+        f"• **Диалог:** `{dialog_title}`\n"
+        f"• **Персона:** `{persona_title}`\n"
+        f"• **Модель:** `{model_id}`\n"
+        f"---\n\n"
+    )
+
+    # 9. Start streaming response
     placeholder_msg = await message.answer("💭 <i>Думаю...</i>", parse_mode="HTML")
-    throttler = MessageStreamThrottler(bot=bot, chat_id=message.chat.id, initial_message=placeholder_msg)
+    throttler = MessageStreamThrottler(
+        bot=bot,
+        chat_id=message.chat.id,
+        initial_message=placeholder_msg,
+        header_text=context_header,
+    )
 
     gemini_service = GeminiService(api_key=api_key)
-    model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
 
     try:
         stream = gemini_service.generate_stream(

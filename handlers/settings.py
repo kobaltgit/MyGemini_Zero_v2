@@ -50,10 +50,13 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
 @router.callback_query(F.data == "menu_settings")
 async def handle_settings_menu(callback: CallbackQuery):
     """Renders the settings menu with user preferences."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     text, keyboard = await render_settings_view(user_id)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data == "settings_models")
@@ -61,6 +64,10 @@ async def handle_settings_models(callback: CallbackQuery):
     """
     Fetches real-time models from Gemini API and marks search-capable models with 🌐.
     """
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     fernet = session_manager.get_fernet(user_id)
 
@@ -87,7 +94,6 @@ async def handle_settings_models(callback: CallbackQuery):
         reply_markup=get_models_keyboard(models, current_model),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("set_model:"))
@@ -107,6 +113,10 @@ async def handle_set_model(callback: CallbackQuery):
 @router.callback_query(F.data == "settings_styles")
 async def handle_settings_styles(callback: CallbackQuery):
     """Renders communication style selector."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
@@ -118,7 +128,6 @@ async def handle_settings_styles(callback: CallbackQuery):
         reply_markup=get_styles_keyboard(current_style),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("set_style:"))
@@ -138,6 +147,10 @@ async def handle_set_style(callback: CallbackQuery):
 @router.callback_query(F.data == "settings_personas")
 async def handle_settings_personas(callback: CallbackQuery):
     """Renders persona selector."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
@@ -149,7 +162,6 @@ async def handle_settings_personas(callback: CallbackQuery):
         reply_markup=get_personas_keyboard(current_persona),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("set_persona:"))
@@ -169,6 +181,10 @@ async def handle_set_persona(callback: CallbackQuery):
 @router.callback_query(F.data == "settings_api_key")
 async def handle_settings_api_key(callback: CallbackQuery):
     """Prompts user to enter their API key via WebApp popup or chat."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     await callback.message.edit_text(
         "🔑 <b>Установка Google Gemini API-ключа</b>\n\n"
         "Бот работает по модели <b>BYOK (Bring Your Own Key)</b>. "
@@ -177,4 +193,3 @@ async def handle_settings_api_key(callback: CallbackQuery):
         reply_markup=get_api_key_input_keyboard(),
         parse_mode="HTML",
     )
-    await callback.answer()

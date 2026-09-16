@@ -50,11 +50,13 @@ class MessageStreamThrottler:
         chat_id: int,
         initial_message: Message,
         throttle_interval: float = 1.1,
+        header_text: str = "",
     ):
         self.bot = bot
         self.chat_id = chat_id
         self.current_message = initial_message
         self.throttle_interval = throttle_interval
+        self.header_text = header_text
 
         self.full_response_text: str = ""
         self.current_chunk_text: str = ""
@@ -78,9 +80,12 @@ class MessageStreamThrottler:
 
     async def _update_telegram_message(self, is_final: bool = False) -> None:
         """Edits the active Telegram message with buffered text."""
-        display_text = self.current_chunk_text.strip()
-        if not display_text:
+        chunk_content = self.current_chunk_text.strip()
+        if not chunk_content and not self.header_text:
             return
+
+        prefix = self.header_text if not self.completed_messages else ""
+        display_text = f"{prefix}{chunk_content}" if chunk_content else prefix.strip()
 
         # Add typing indicator cursor if still streaming
         if not is_final:

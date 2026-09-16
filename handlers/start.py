@@ -83,6 +83,7 @@ async def handle_start(message: Message):
 @router.callback_query(F.data == "back_to_main")
 async def handle_back_to_main(callback: CallbackQuery):
     """Returns to the primary main menu."""
+    await callback.answer()
     user_id = callback.from_user.id
     is_unlocked = session_manager.is_unlocked(user_id)
     is_admin = user_id == settings.ADMIN_USER_ID
@@ -92,4 +93,3 @@ async def handle_back_to_main(callback: CallbackQuery):
         reply_markup=get_main_menu_keyboard(is_unlocked=is_unlocked, is_admin=is_admin),
         parse_mode="HTML",
     )
-    await callback.answer()

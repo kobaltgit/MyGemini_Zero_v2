@@ -44,10 +44,13 @@ async def auto_delete_user_message(message: Message):
 async def handle_close_menu(callback: CallbackQuery):
     """Universal handler for '❌ Закрыть' button. Instantly deletes the service menu message."""
     try:
+        await callback.answer()
+    except Exception:
+        pass
+    try:
         await callback.message.delete()
     except Exception:
         pass
-    await callback.answer()
 
 
 @router.message(Command("start"))

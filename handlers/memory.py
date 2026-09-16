@@ -65,19 +65,25 @@ async def render_documents_view(user_id: int) -> tuple[str, InlineKeyboardMarkup
 @router.callback_query(F.data == "menu_memory")
 async def handle_memory_menu(callback: CallbackQuery):
     """Displays memory & document overview for the active dialog."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     text, keyboard = await render_documents_view(user_id)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data == "memory_view_docs")
 async def handle_view_documents(callback: CallbackQuery):
     """Refreshes documents list."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     text, keyboard = await render_documents_view(user_id)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("doc_del:"))
@@ -106,6 +112,10 @@ async def handle_delete_document(callback: CallbackQuery):
 @router.callback_query(F.data == "memory_wipe_confirm")
 async def handle_wipe_confirm_prompt(callback: CallbackQuery):
     """Prompts for irreversible Zero-Knowledge data wipe confirmation."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔴 ДА, УДАЛИТЬ ВСЁ БЕЗВОЗВРАТНО", callback_data="memory_wipe_execute")],
         [InlineKeyboardButton(text="⬅️ Отмена", callback_data="menu_memory"), get_close_button()],
@@ -121,12 +131,12 @@ async def handle_wipe_confirm_prompt(callback: CallbackQuery):
         reply_markup=keyboard,
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "memory_wipe_execute")
 async def handle_wipe_execute(callback: CallbackQuery):
     """Executes full data wipe and purges RAM sessions."""
+    await callback.answer("Данные удалены", show_alert=True)
     user_id = callback.from_user.id
 
     async with async_session_maker() as session:
@@ -141,4 +151,3 @@ async def handle_wipe_execute(callback: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button()]]),
         parse_mode="HTML",
     )
-    await callback.answer("Данные удалены", show_alert=True)

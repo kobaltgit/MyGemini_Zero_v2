@@ -58,15 +58,22 @@ async def render_profile_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
 @router.callback_query(F.data == "menu_profile")
 async def handle_profile_menu_callback(callback: CallbackQuery):
     """Displays personal account via inline callback."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     text, keyboard = await render_profile_view(user_id)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data == "profile_edit")
 async def handle_profile_edit_start(callback: CallbackQuery, state: FSMContext):
     """Starts profile questionnaire."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
     fernet = session_manager.get_fernet(user_id)
 
@@ -78,7 +85,6 @@ async def handle_profile_edit_start(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_unlock_keyboard(),
             parse_mode="HTML",
         )
-        await callback.answer()
         return
 
     await state.set_state(ProfileStates.waiting_for_role)
@@ -89,7 +95,6 @@ async def handle_profile_edit_start(callback: CallbackQuery, state: FSMContext):
         "<i>Отправьте ответ в чат (или отправьте '-' чтобы пропустить):</i>",
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.message(ProfileStates.waiting_for_role)

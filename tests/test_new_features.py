@@ -168,3 +168,38 @@ async def test_render_settings_view():
     assert "Настройки AI-ассистента" in text
     assert len(kb.inline_keyboard) > 0
 
+
+@pytest.mark.asyncio
+async def test_throttler_with_context_header(mocker):
+    """Verifies that MessageStreamThrottler prepends header to Telegram display and keeps finalize clean."""
+    from services.throttler import MessageStreamThrottler
+
+    mock_bot = mocker.AsyncMock()
+    mock_msg = mocker.MagicMock()
+    mock_msg.message_id = 12345
+
+    header = "• **Диалог:** `Тест`\n• **Персона:** `Обычный`\n• **Модель:** `gemini-2.5-flash`\n---\n\n"
+    throttler = MessageStreamThrottler(
+        bot=mock_bot,
+        chat_id=10001,
+        initial_message=mock_msg,
+        header_text=header,
+    )
+
+    await throttler.handle_chunk("Привет, ")
+    await throttler.handle_chunk("мир!")
+
+    raw_response = await throttler.finalize()
+
+    # Raw response returned by finalize must be the pure AI text for DB storage
+    assert raw_response == "Привет, мир!"
+
+    # Verify that bot.edit_message_text was called and received formatted text with header
+    assert mock_bot.edit_message_text.called
+    last_call_kwargs = mock_bot.edit_message_text.call_args.kwargs
+    assert "text" in last_call_kwargs
+    # The formatted text must contain dialog name and AI response
+    assert "Тест" in last_call_kwargs["text"]
+    assert "Привет" in last_call_kwargs["text"]
+
+

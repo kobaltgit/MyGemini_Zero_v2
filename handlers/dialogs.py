@@ -27,6 +27,10 @@ class DialogStates(StatesGroup):
 @router.callback_query(F.data == "dialog_list")
 async def handle_dialog_list(callback: CallbackQuery):
     """Displays user's conversation threads with active status and document attachment indicators."""
+    try:
+        await callback.answer()
+    except Exception:
+        pass
     user_id = callback.from_user.id
 
     async with async_session_maker() as session:
@@ -81,7 +85,6 @@ async def handle_dialog_list(callback: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("dialog_switch:"))
@@ -107,6 +110,7 @@ async def handle_dialog_switch(callback: CallbackQuery):
 @router.callback_query(F.data == "dialog_new")
 async def handle_dialog_new(callback: CallbackQuery):
     """Instantly creates new active dialog with auto-naming enabled."""
+    await callback.answer("Создан новый диалог")
     user_id = callback.from_user.id
 
     async with async_session_maker() as session:
@@ -122,12 +126,12 @@ async def handle_dialog_new(callback: CallbackQuery):
         ]),
         parse_mode="HTML",
     )
-    await callback.answer("Создан новый диалог")
 
 
 @router.callback_query(F.data.startswith("dialog_rename_prompt:"))
 async def handle_dialog_rename_prompt(callback: CallbackQuery, state: FSMContext):
     """Prompts for new name for existing dialog."""
+    await callback.answer()
     dialog_id = int(callback.data.split(":")[1])
     await state.update_data(rename_dialog_id=dialog_id)
     await state.set_state(DialogStates.waiting_for_rename)
@@ -139,7 +143,6 @@ async def handle_dialog_rename_prompt(callback: CallbackQuery, state: FSMContext
         ]),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.message(DialogStates.waiting_for_rename)
