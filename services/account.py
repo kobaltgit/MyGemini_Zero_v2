@@ -1,0 +1,103 @@
+"""
+Personal Account & User Profile Service for MyGemini Zero v2.
+Calculates user titles/ranks, message statistics, days active, subscription metrics,
+and formats the personal account card.
+"""
+
+from datetime import datetime
+from typing import Dict, Any, Optional
+from cryptography.fernet import Fernet
+
+from database.models.user import User
+
+
+def get_user_rank(message_count: int) -> str:
+    """Calculates user title/rank based on total sent messages."""
+    if message_count >= 1000:
+        return "👑 Легенда"
+    elif message_count >= 250:
+        return "🥇 Мастер общения"
+    elif message_count >= 50:
+        return "🥈 Ветеран чата"
+    else:
+        return "🥉 Новичок"
+
+
+def format_account_card(
+    user: User,
+    message_count: int,
+    profile_data: Optional[Dict[str, Any]] = None,
+    is_vault_unlocked: bool = False,
+) -> str:
+    """
+    Renders user profile and statistics card for 'Личный кабинет'.
+    """
+    now = datetime.now()
+    rank = get_user_rank(message_count)
+
+    # Calculate days with bot
+    days_active = 1
+    reg_date_str = "—"
+    date_field = user.first_interaction_date
+    if date_field:
+        try:
+            reg_dt = datetime.strptime(date_field[:10], "%Y-%m-%d")
+            days_active = max(1, (now - reg_dt).days + 1)
+            reg_date_str = reg_dt.strftime("%d.%m.%Y")
+        except Exception:
+            reg_date_str = date_field[:10]
+
+    # Subscription details
+    sub_status_icon = "🟢" if user.subscription_status == "active" else "⚪️"
+    sub_days_left_str = ""
+    if user.subscription_end_date:
+        try:
+            end_dt = datetime.strptime(user.subscription_end_date[:10], "%Y-%m-%d")
+            diff = (end_dt - now).days
+            if diff >= 0:
+                sub_days_left_str = f" (осталось {diff} дн.)"
+            else:
+                sub_days_left_str = " (истекла)"
+        except Exception:
+            pass
+
+    sub_line = f"{sub_status_icon} <b>Подписка:</b> {user.subscription_status.capitalize()}{sub_days_left_str}"
+    if user.subscription_end_date:
+        sub_line += f"\n   • <b>Действует до:</b> {user.subscription_end_date[:10]}"
+
+    # Model and API key
+    model_name = user.gemini_model or "gemini-2.5-flash"
+    api_key_status = "✅ Установлен (Zero-Knowledge)" if user.api_key else "❌ Используется общий серверный"
+
+    lines = [
+        f"👤 <b>Личный кабинет: {user.first_name or 'Пользователь'}</b>\n",
+        f"🏆 <b>Звание:</b> {rank}",
+        f"💬 <b>Всего сообщений:</b> {message_count}",
+        f"🗓️ <b>С нами:</b> {days_active} дн. (с {reg_date_str})",
+        "",
+        sub_line,
+        "",
+        f"🤖 <b>Текущая модель:</b> <code>{model_name}</code>",
+        f"🔑 <b>Личный API-ключ:</b> {api_key_status}",
+    ]
+
+    # Profile questionnaire section
+    if profile_data:
+        lines.append("\n📝 <b>Анкета пользователя:</b>")
+        if profile_data.get("role"):
+            lines.append(f"   • <b>Роль / Профессия:</b> {profile_data['role']}")
+        if profile_data.get("field"):
+            lines.append(f"   • <b>Сфера:</b> {profile_data['field']}")
+        if profile_data.get("stack"):
+            lines.append(f"   • <b>Стек / Инструменты:</b> {profile_data['stack']}")
+        if profile_data.get("projects"):
+            lines.append(f"   • <b>Текущие проекты:</b> {profile_data['projects']}")
+        if profile_data.get("goals"):
+            lines.append(f"   • <b>Цели общения:</b> {profile_data['goals']}")
+    else:
+        if is_vault_unlocked:
+            lines.append("\nℹ️ <i>Анкета профиля ещё не заполнена. Заполните её, чтобы Gemini лучше понимал ваши задачи и контекст.</i>")
+        else:
+            lines.append("\n🔒 <i>Сейф заблокирован. Разблокируйте мастер-паролем для просмотра зашифрованной анкеты.</i>")
+
+    return "\n".join(lines)

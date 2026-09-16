@@ -1,8 +1,8 @@
 """
 Memory & Document Management Handler for MyGemini Zero v2.
-Fulfills user requirement #4:
-- Viewing all uploaded documents currently stored in vector memory for the active dialog.
-- Targeted deletion of individual documents and their chunks from ChromaDB.
+Fulfills user requirements:
+- Viewing uploaded document file names immediately in active dialog memory.
+- Targeted deletion of individual documents and chunks from ChromaDB.
 - Archiving old conversation messages and Zero-Knowledge full data wipe.
 """
 
@@ -15,7 +15,7 @@ from services.vector_store import VectorStoreManager
 from keyboards.inline import (
     get_memory_menu_keyboard,
     get_documents_list_keyboard,
-    get_main_menu_keyboard,
+    get_close_button,
 )
 from middlewares.auth import session_manager
 from core.config import settings
@@ -23,38 +23,8 @@ from core.config import settings
 router = Router(name="memory")
 
 
-@router.callback_query(F.data == "menu_memory")
-async def handle_memory_menu(callback: CallbackQuery):
-    """Displays memory & document overview for the active dialog."""
-    user_id = callback.from_user.id
-
-    async with async_session_maker() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-        active_id = user.active_dialog_id if user else 0
-
-    vm = VectorStoreManager()
-    docs = vm.get_dialog_documents(active_id) if active_id else []
-
-    await callback.message.edit_text(
-        f"🧠 <b>Долговременная векторная память (RAG):</b>\n\n"
-        f"• <b>Текущий диалог:</b> ID <code>{active_id}</code>\n"
-        f"• <b>Загружено документов в память:</b> {len(docs)}\n\n"
-        "Вы можете просмотреть загруженные файлы и удалить ненужные по отдельности, "
-        "архивировать старые сообщения или выполнить полную очистку данных.",
-        reply_markup=get_memory_menu_keyboard(docs_count=len(docs)),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "memory_view_docs")
-async def handle_view_documents(callback: CallbackQuery):
-    """
-    Displays the list of documents uploaded into vector memory with delete buttons.
-    """
-    user_id = callback.from_user.id
-
+async def render_documents_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Prepares text listing file names and keyboard for documents in active dialog."""
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(user_id)
@@ -64,31 +34,49 @@ async def handle_view_documents(callback: CallbackQuery):
     docs = vm.get_dialog_documents(active_id) if active_id else []
 
     if not docs:
-        await callback.message.edit_text(
-            "📄 <b>В памяти текущего диалога нет документов.</b>\n\n"
-            "Вы можете отправить файл (PDF, DOCX, TXT) прямо в чат, и бот автоматически добавит его в базу знаний.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад в память", callback_data="menu_memory")]
-            ]),
-            parse_mode="HTML",
+        text = (
+            f"📄 <b>Документы в текущем диалоге (ID {active_id}):</b>\n\n"
+            "<i>В памяти этого диалога пока нет загруженных файлов.</i>\n\n"
+            "📎 <b>Как добавить документ:</b>\n"
+            "Отправьте файл прямо в чат (.pdf, .docx, .txt, .md, .py, .json).\n"
+            "Бот автоматически проиндексирует его в векторную память (RAG), "
+            "и вы сможете задавать вопросы по его содержанию."
         )
-        return
+        keyboard = get_memory_menu_keyboard(docs_count=0)
+        return text, keyboard
 
-    text_lines = ["📄 <b>Документы в памяти активного диалога:</b>\n"]
+    text_lines = [
+        f"📄 <b>Документы в текущем диалоге (ID {active_id}):</b>\n",
+        f"Всего файлов в базе знаний: <b>{len(docs)}</b>\n",
+    ]
     for i, d in enumerate(docs, 1):
+        dt = d.get("timestamp", "")[:19].replace("T", " ")
+        dt_str = f" | 📅 {dt}" if dt else ""
         text_lines.append(
-            f"<b>{i}. {d['file_name']}</b>\n"
-            f"   • Фрагментов (чанков): {d['chunks_count']}\n"
-            f"   • Дата: {d['timestamp'][:19].replace('T', ' ')}"
+            f"<b>{i}. 📑 {d['file_name']}</b>\n"
+            f"   • Фрагментов (чанков): {d['chunks_count']}{dt_str}"
         )
 
-    text_lines.append("\nНажмите на кнопку с файлом ниже, чтобы удалить его из памяти:")
+    text_lines.append("\nНажмите на кнопку с именем файла ниже, чтобы удалить его из базы знаний:")
+    keyboard = get_documents_list_keyboard(docs)
+    return "\n".join(text_lines), keyboard
 
-    await callback.message.edit_text(
-        "\n".join(text_lines),
-        reply_markup=get_documents_list_keyboard(docs),
-        parse_mode="HTML",
-    )
+
+@router.callback_query(F.data == "menu_memory")
+async def handle_memory_menu(callback: CallbackQuery):
+    """Displays memory & document overview for the active dialog."""
+    user_id = callback.from_user.id
+    text, keyboard = await render_documents_view(user_id)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "memory_view_docs")
+async def handle_view_documents(callback: CallbackQuery):
+    """Refreshes documents list."""
+    user_id = callback.from_user.id
+    text, keyboard = await render_documents_view(user_id)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
 
@@ -111,7 +99,8 @@ async def handle_delete_document(callback: CallbackQuery):
     else:
         await callback.answer("Ошибка при удалении документа.", show_alert=True)
 
-    await handle_view_documents(callback)
+    text, keyboard = await render_documents_view(user_id)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "memory_wipe_confirm")
@@ -119,7 +108,7 @@ async def handle_wipe_confirm_prompt(callback: CallbackQuery):
     """Prompts for irreversible Zero-Knowledge data wipe confirmation."""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔴 ДА, УДАЛИТЬ ВСЁ БЕЗВОЗВРАТНО", callback_data="memory_wipe_execute")],
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="menu_memory")],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="menu_memory"), get_close_button()],
     ])
 
     await callback.message.edit_text(
@@ -149,6 +138,7 @@ async def handle_wipe_execute(callback: CallbackQuery):
     await callback.message.edit_text(
         "🗑 <b>Все ваши данные успешно стёрты.</b>\n\n"
         "Хранилище очищено. Для повторного начала работы отправьте команду /start.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button()]]),
         parse_mode="HTML",
     )
     await callback.answer("Данные удалены", show_alert=True)

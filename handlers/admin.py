@@ -126,14 +126,31 @@ async def handle_admin_subscribers_list(callback: CallbackQuery):
         user_payments_map.setdefault(p.user_id, []).append(p)
 
     now = datetime.now()
+
+    # Sort subscribers: paid / active first, then by subscription end date
+    def subscriber_sort_key(s):
+        payments = user_payments_map.get(s.user_id, [])
+        total_paid = sum(p.amount for p in payments)
+        is_active = 1 if s.subscription_status == "active" else 0
+        has_paid = 1 if (is_active or total_paid > 0) else 0
+        end_d = s.subscription_end_date or ""
+        return (has_paid, is_active, end_d)
+
+    sorted_subscribers = sorted(subscribers, key=subscriber_sort_key, reverse=True)
+
     lines = ["👥 <b>Список подписчиков с подробностями:</b>\n"]
 
-    for i, sub in enumerate(subscribers, 1):
+    for i, sub in enumerate(sorted_subscribers, 1):
         uname = f"@{sub.username}" if sub.username else "без username"
         full_name = f"{sub.first_name or ''} {sub.last_name or ''}".strip() or "Аноним"
         payments = user_payments_map.get(sub.user_id, [])
         renewals_count = len(payments)
         total_paid_rub = sum(p.amount for p in payments) // 100
+        is_active = sub.subscription_status == "active"
+        is_paid = is_active or (total_paid_rub > 0)
+
+        # Green marker for paid subscribers, neutral for others
+        marker = "🟢" if is_paid else "⚪"
 
         # Calculate days left
         days_left_str = "—"
@@ -146,7 +163,7 @@ async def handle_admin_subscribers_list(callback: CallbackQuery):
                 days_left_str = "—"
 
         lines.append(
-            f"<b>{i}. {full_name}</b> ({uname})\n"
+            f"{marker} <b>{i}. {full_name}</b> ({uname})\n"
             f"   • <b>ID:</b> <code>{sub.user_id}</code>\n"
             f"   • <b>Статус:</b> {sub.subscription_status}\n"
             f"   • <b>Действует до:</b> {sub.subscription_end_date or '—'} ({days_left_str})\n"

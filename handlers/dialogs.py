@@ -1,31 +1,32 @@
 """
-Dialogs Management Handler for MyGemini Zero v2.
+Dialog Management Handler for MyGemini Zero v2.
 Allows users to switch active conversation contexts, rename dialogs,
-create new dialogs, and delete dialogs (including their ChromaDB memory).
+create new dialogs (with auto-naming), and delete dialogs (including ChromaDB memory).
+Displays 📎 icon for dialogs with attached documents and includes ❌ Закрыть button.
 """
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
 from core.database import async_session_maker
 from database.repositories import DialogRepository, UserRepository
 from services.vector_store import VectorStoreManager
-from keyboards.inline import get_main_menu_keyboard
+from keyboards.inline import get_main_menu_keyboard, get_close_button
 from core.config import settings
 
 router = Router(name="dialogs")
 
 
 class DialogStates(StatesGroup):
-    waiting_for_new_name = State()
     waiting_for_rename = State()
 
 
 @router.callback_query(F.data == "dialog_list")
 async def handle_dialog_list(callback: CallbackQuery):
-    """Displays user's conversation threads with active status."""
+    """Displays user's conversation threads with active status and document attachment indicators."""
     user_id = callback.from_user.id
 
     async with async_session_maker() as session:
@@ -37,16 +38,26 @@ async def handle_dialog_list(callback: CallbackQuery):
         dialogs = await dialog_repo.get_user_dialogs(user_id)
 
     if not dialogs:
-        await callback.message.edit_text("У вас пока нет созданных диалогов.")
+        await callback.message.edit_text(
+            "У вас пока нет созданных диалогов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="➕ Создать новый диалог", callback_data="dialog_new")],
+                [get_close_button()],
+            ]),
+        )
         return
 
+    vm = VectorStoreManager()
     buttons = []
     for d in dialogs:
         is_active = d.dialog_id == active_id
         icon = "🔘 " if is_active else "⚪️ "
+        docs = vm.get_dialog_documents(d.dialog_id)
+        doc_icon = "📎 " if docs else ""
+
         buttons.append([
             InlineKeyboardButton(
-                text=f"{icon}{d.name}",
+                text=f"{icon}{doc_icon}{d.name}",
                 callback_data=f"dialog_switch:{d.dialog_id}",
             ),
             InlineKeyboardButton(
@@ -60,11 +71,12 @@ async def handle_dialog_list(callback: CallbackQuery):
         ])
 
     buttons.append([InlineKeyboardButton(text="➕ Создать новый диалог", callback_data="dialog_new")])
-    buttons.append([InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")])
+    buttons.append([InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main"), get_close_button()])
 
     await callback.message.edit_text(
         "🗂 <b>Ваши диалоги:</b>\n\n"
         "🔘 — активный диалог (текущий контекст)\n"
+        "📎 — диалог содержит прикреплённые документы (RAG-память)\n\n"
         "Нажмите на название диалога, чтобы переключиться на него:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="HTML",
@@ -93,32 +105,24 @@ async def handle_dialog_switch(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "dialog_new")
-async def handle_dialog_new_prompt(callback: CallbackQuery, state: FSMContext):
-    """Prompts for title of new dialog."""
-    await state.set_state(DialogStates.waiting_for_new_name)
-    await callback.message.edit_text(
-        "➕ Введите название нового диалога в чат:\n\n(Например: <i>Рабочие задачи</i>, <i>Изучение Python</i>)",
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.message(DialogStates.waiting_for_new_name)
-async def process_dialog_new(message: Message, state: FSMContext):
-    """Creates new dialog."""
-    user_id = message.from_user.id
-    name = message.text.strip() if message.text else "Новый диалог"
-    await state.clear()
+async def handle_dialog_new(callback: CallbackQuery):
+    """Instantly creates new active dialog with auto-naming enabled."""
+    user_id = callback.from_user.id
 
     async with async_session_maker() as session:
         dialog_repo = DialogRepository(session)
-        dialog = await dialog_repo.create_dialog(user_id=user_id, name=name, set_active=True)
+        dialog = await dialog_repo.create_dialog(user_id=user_id, name="Новый диалог", set_active=True)
 
-    await message.answer(
-        f"✅ Создан новый активный диалог: <b>{dialog.name}</b>",
-        reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
+    await callback.message.edit_text(
+        f"✅ <b>Создан новый активный диалог!</b>\n\n"
+        f"Напишите первое сообщение в чат — бот автоматически подберёт ёмкое название темы по смыслу вашего вопроса.\n\n"
+        f"<i>Вы также можете переименовать диалог вручную в любой момент через кнопку ✏️ или команду /rename.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗂 Список диалогов", callback_data="dialog_list"), get_close_button()]
+        ]),
         parse_mode="HTML",
     )
+    await callback.answer("Создан новый диалог")
 
 
 @router.callback_query(F.data.startswith("dialog_rename_prompt:"))
@@ -128,24 +132,41 @@ async def handle_dialog_rename_prompt(callback: CallbackQuery, state: FSMContext
     await state.update_data(rename_dialog_id=dialog_id)
     await state.set_state(DialogStates.waiting_for_rename)
 
-    await callback.message.edit_text("✏️ Введите новое название для этого диалога:", parse_mode="HTML")
+    await callback.message.edit_text(
+        "✏️ Введите новое название для этого диалога в чат:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад к диалогам", callback_data="dialog_list"), get_close_button()]
+        ]),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 @router.message(DialogStates.waiting_for_rename)
 async def process_dialog_rename(message: Message, state: FSMContext):
-    """Applies rename to dialog."""
+    """Applies rename to dialog and deletes user prompt message for cleanliness."""
     user_id = message.from_user.id
     new_name = message.text.strip() if message.text else ""
     data = await state.get_data()
     dialog_id = data.get("rename_dialog_id")
     await state.clear()
 
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
     if dialog_id and new_name:
         async with async_session_maker() as session:
             dialog_repo = DialogRepository(session)
             await dialog_repo.rename_dialog(dialog_id, new_name)
-        await message.answer(f"✅ Диалог переименован в: <b>{new_name}</b>", parse_mode="HTML")
+        await message.answer(
+            f"✅ Диалог переименован в: <b>{new_name}</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🗂 Список диалогов", callback_data="dialog_list"), get_close_button()]
+            ]),
+            parse_mode="HTML",
+        )
     else:
         await message.answer("⚠️ Не удалось переименовать диалог.")
 
@@ -161,7 +182,6 @@ async def handle_dialog_delete(callback: CallbackQuery):
         success = await dialog_repo.delete_dialog(user_id=user_id, dialog_id=dialog_id)
 
     if success:
-        # Purge ChromaDB memory
         vm = VectorStoreManager()
         vm.delete_dialog_memory(dialog_id)
         await callback.answer("Диалог и его векторная память удалены.", show_alert=True)

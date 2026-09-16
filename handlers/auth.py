@@ -21,6 +21,7 @@ from keyboards.inline import (
     get_set_password_keyboard,
     get_api_key_input_keyboard,
 )
+from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
 from core.config import settings
 from core.logger import get_logger
 
@@ -104,7 +105,7 @@ async def handle_webapp_data(message: Message, state: FSMContext):
                 await message.answer(
                     "🔓 <b>Сейф успешно разблокирован!</b>\n"
                     "Сессия активна. Диалоги расшифрованы и готовы к продолжению.",
-                    reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
+                    reply_markup=get_main_reply_keyboard(is_admin=(user_id == settings.ADMIN_USER_ID)),
                     parse_mode="HTML",
                 )
             else:
@@ -152,10 +153,18 @@ async def handle_vault_lock(callback: CallbackQuery):
 
     await callback.message.edit_text(
         "🔒 <b>Сейф заблокирован.</b>\n"
-        "Ключи дешифрования удалены из оперативной памяти. Для продолжения введите мастер-пароль:",
+        "Ключи дешифрования удалены из оперативной памяти сервера.\n"
+        "Для разблокировки введите ваш мастер-пароль:",
         reply_markup=get_unlock_keyboard(),
         parse_mode="HTML",
     )
+    try:
+        await callback.message.answer(
+            "🔐 Введите мастер-пароль:",
+            reply_markup=get_locked_reply_keyboard(),
+        )
+    except Exception:
+        pass
     await callback.answer("Сейф заблокирован")
 
 
@@ -204,8 +213,9 @@ async def process_chat_password_unlock(message: Message, state: FSMContext):
             session_manager.unlock_session(user_id, fernet)
 
             await message.answer(
-                "🔓 <b>Сейф успешно разблокирован!</b>",
-                reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
+                "🔓 <b>Сейф успешно разблокирован!</b>\n"
+                "Сессия активна. Диалоги расшифрованы и готовы к продолжению.",
+                reply_markup=get_main_reply_keyboard(is_admin=(user_id == settings.ADMIN_USER_ID)),
                 parse_mode="HTML",
             )
         else:

@@ -1,7 +1,7 @@
 """
 MyGemini Zero v2 - Application Main Entry Point.
 Initializes structured logging, async SQLite database, registers aiogram 3.x routers and middlewares,
-and launches long-polling with graceful shutdown.
+sets up Russian bot command menu in Telegram, and launches long-polling with graceful shutdown.
 """
 
 import asyncio
@@ -9,6 +9,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand, BotCommandScopeDefault
 
 from core.config import settings
 from core.logger import setup_logging, get_logger
@@ -18,6 +19,30 @@ from middlewares.auth import AuthMiddleware
 from middlewares.antispam import KeyLeakAndAntispamMiddleware
 
 logger = get_logger("bot_general")
+
+
+async def setup_bot_commands(bot: Bot) -> None:
+    """Registers Russian command descriptions in Telegram's blue [Menu] button."""
+    commands = [
+        BotCommand(command="start", description="Перезапустить бота и показать меню"),
+        BotCommand(command="profile", description="👤 Личный кабинет (звание, анкета, подписка)"),
+        BotCommand(command="dialogs", description="🗂️ Список диалогов"),
+        BotCommand(command="new_dialog", description="➕ Создать новый диалог"),
+        BotCommand(command="rename", description="✏️ Переименовать текущий диалог"),
+        BotCommand(command="settings", description="⚙️ Настройки моделей, персон и ключа"),
+        BotCommand(command="documents", description="📄 Документы в памяти диалога (RAG)"),
+        BotCommand(command="memorize", description="📎 Инструкция по отправке документов"),
+        BotCommand(command="reset", description="🔄 Сброс контекста диалога"),
+        BotCommand(command="help", description="❓ Справка по всем возможностям"),
+        BotCommand(command="logout", description="🔒 Заблокировать сейф в памяти"),
+        BotCommand(command="cancel", description="❌ Отменить текущее действие"),
+        BotCommand(command="panic", description="🚨 Информация о паник-пароле"),
+    ]
+    try:
+        await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+        logger.info("Bot commands successfully registered with Telegram.")
+    except Exception as e:
+        logger.warning(f"Could not register bot commands: {e}")
 
 
 async def main() -> None:
@@ -56,6 +81,10 @@ async def main() -> None:
         bot_info = await bot.get_me()
         logger.info(f"Bot @{bot_info.username} (ID: {bot_info.id}) started polling.")
         print(f"=== MyGemini Zero v2 запущен (@{bot_info.username}) ===")
+
+        # Register Telegram Commands
+        await setup_bot_commands(bot)
+
         await dp.start_polling(bot)
     except Exception as e:
         logger.critical(f"Fatal error during bot execution: {e}", exc_info=True)

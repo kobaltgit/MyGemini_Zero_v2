@@ -16,6 +16,7 @@ from services.gemini import GeminiService
 from services.throttler import MessageStreamThrottler
 from services.media import format_image_part, format_audio_part, parse_document_text
 from services.vector_store import VectorStoreManager
+from services.dialog_namer import generate_dialog_title
 from middlewares.auth import session_manager
 from keyboards.inline import (
     get_unlock_keyboard,
@@ -133,11 +134,23 @@ async def handle_user_message(message: Message, bot: Bot):
         if not user_text:
             user_text = "[Голосовое сообщение]"
 
-    # 5. Semantic RAG Search for context
+    # 5. Semantic RAG Search for context & Auto-naming
     rag_context = ""
     vm = VectorStoreManager(api_key=api_key)
     if user_text and user_text != "[Голосовое сообщение]":
         rag_context = await vm.search_context(active_dialog_id, user_text)
+
+        # Auto-name dialog if it still has default placeholder name
+        try:
+            async with async_session_maker() as session:
+                dialog_repo = DialogRepository(session)
+                active_d = await dialog_repo.get_by_id(active_dialog_id)
+                if active_d and active_d.name in ("Новый диалог", "Основной диалог"):
+                    new_title = await generate_dialog_title(user_text, api_key=api_key)
+                    if new_title and new_title != active_d.name:
+                        await dialog_repo.rename_dialog(active_dialog_id, new_title)
+        except Exception as e:
+            logger.warning(f"Error auto-naming dialog {active_dialog_id}: {e}")
 
     # 6. Load conversation history
     async with async_session_maker() as session:

@@ -1,12 +1,18 @@
 """
 Inline Keyboards Module for MyGemini Zero v2.
 Builds interactive Telegram inline markup for menus, settings, WebApp popups,
-models list with search badges, document management, subscriptions, and administration.
+models list with search badges, document management, subscriptions, profile, and administration.
+Includes "❌ Закрыть" buttons across all interfaces for clean chat history.
 """
 
 from typing import List, Dict, Any, Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from core.config import settings, BOT_STYLES, BOT_PERSONAS
+
+
+def get_close_button() -> InlineKeyboardButton:
+    """Returns universal close button that deletes the bot message."""
+    return InlineKeyboardButton(text="❌ Закрыть", callback_data="close_menu")
 
 
 def get_main_menu_keyboard(is_unlocked: bool = False, is_admin: bool = False) -> InlineKeyboardMarkup:
@@ -18,9 +24,10 @@ def get_main_menu_keyboard(is_unlocked: bool = False, is_admin: bool = False) ->
         ],
         [
             InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu_settings"),
-            InlineKeyboardButton(text="🧠 Память и документы", callback_data="menu_memory"),
+            InlineKeyboardButton(text="📄 Документы", callback_data="menu_memory"),
         ],
         [
+            InlineKeyboardButton(text="👤 Личный кабинет", callback_data="menu_profile"),
             InlineKeyboardButton(text="💎 Подписка", callback_data="menu_subscription"),
         ],
     ]
@@ -29,50 +36,31 @@ def get_main_menu_keyboard(is_unlocked: bool = False, is_admin: bool = False) ->
     if is_unlocked:
         buttons.append([InlineKeyboardButton(text="🔒 Заблокировать память", callback_data="vault_lock")])
     else:
-        # Use WebApp if configured, otherwise fallback to chat callback
-        if settings.WEBAPP_URL:
-            buttons.append([
-                InlineKeyboardButton(
-                    text="🔐 Разблокировать сейф",
-                    web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}?mode=password"),
-                )
-            ])
-        else:
-            buttons.append([InlineKeyboardButton(text="🔐 Разблокировать сейф", callback_data="vault_unlock_chat")])
+        buttons.append([InlineKeyboardButton(text="🔐 Разблокировать сейф", callback_data="vault_unlock_chat")])
 
     # Admin panel
     if is_admin:
         buttons.append([InlineKeyboardButton(text="👑 Панель администратора", callback_data="menu_admin")])
 
+    buttons.append([get_close_button()])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_unlock_keyboard() -> InlineKeyboardMarkup:
     """Builds keyboard for master password entry."""
-    buttons = []
-    if settings.WEBAPP_URL:
-        buttons.append([
-            InlineKeyboardButton(
-                text="🔐 Ввести мастер-пароль (всплывающее окно)",
-                web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}?mode=password"),
-            )
-        ])
-    buttons.append([InlineKeyboardButton(text="⌨️ Ввести пароль в чате", callback_data="vault_unlock_chat")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_to_main")])
+    buttons = [
+        [InlineKeyboardButton(text="⌨️ Ввести пароль в чате (автоудаление)", callback_data="vault_unlock_chat")],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_to_main"), get_close_button()],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_set_password_keyboard() -> InlineKeyboardMarkup:
     """Builds keyboard for setting master password on onboarding."""
-    buttons = []
-    if settings.WEBAPP_URL:
-        buttons.append([
-            InlineKeyboardButton(
-                text="🔐 Установить пароль (всплывающее окно)",
-                web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}?mode=password"),
-            )
-        ])
-    buttons.append([InlineKeyboardButton(text="⌨️ Ввести пароль в чате", callback_data="vault_setup_chat")])
+    buttons = [
+        [InlineKeyboardButton(text="⌨️ Ввести пароль в чате", callback_data="vault_setup_chat")],
+        [get_close_button()],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -90,23 +78,17 @@ def get_settings_keyboard(current_model: str, current_style: str, current_person
             )
         ],
         [InlineKeyboardButton(text="🚨 Настроить паник-пароль", callback_data="settings_panic")],
-        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")],
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main"), get_close_button()],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_api_key_input_keyboard() -> InlineKeyboardMarkup:
     """Builds keyboard for API key entry."""
-    buttons = []
-    if settings.WEBAPP_URL:
-        buttons.append([
-            InlineKeyboardButton(
-                text="🔑 Ввести API-ключ (всплывающее окно)",
-                web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}?mode=apikey"),
-            )
-        ])
-    buttons.append([InlineKeyboardButton(text="⌨️ Ввести ключ в чате", callback_data="api_key_chat_input")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings")])
+    buttons = [
+        [InlineKeyboardButton(text="⌨️ Ввести ключ в чате", callback_data="api_key_chat_input")],
+        [InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings"), get_close_button()],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -125,7 +107,7 @@ def get_models_keyboard(models: List[Dict[str, Any]], current_model_id: str) -> 
                 callback_data=f"set_model:{mid}",
             )
         ])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings"), get_close_button()])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -137,7 +119,7 @@ def get_styles_keyboard(current_style_key: str) -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(text=f"{active}{sname}", callback_data=f"set_style:{skey}")
         ])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings"), get_close_button()])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -150,7 +132,7 @@ def get_personas_keyboard(current_persona_key: str) -> InlineKeyboardMarkup:
         buttons.append([
             InlineKeyboardButton(text=f"{active}{name}", callback_data=f"set_persona:{pkey}")
         ])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в настройки", callback_data="menu_settings"), get_close_button()])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -159,7 +141,7 @@ def get_memory_menu_keyboard(docs_count: int = 0) -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                text=f"📄 Загруженные документы ({docs_count})",
+                text=f"📄 Список документов ({docs_count})",
                 callback_data="memory_view_docs",
             )
         ],
@@ -175,27 +157,40 @@ def get_memory_menu_keyboard(docs_count: int = 0) -> InlineKeyboardMarkup:
                 callback_data="memory_wipe_confirm",
             )
         ],
-        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")],
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main"), get_close_button()],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_documents_list_keyboard(documents: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     """
-    Renders document list with individual delete buttons.
+    Renders document list with individual delete buttons and file names.
     """
     buttons = []
     for doc in documents:
         fname = doc["file_name"]
         fhash = doc["file_hash"]
         chunks = doc["chunks_count"]
+        # Limit button text length for Telegram
+        btn_name = fname if len(fname) <= 25 else fname[:22] + "..."
         buttons.append([
             InlineKeyboardButton(
-                text=f"🗑 Удалить: {fname} ({chunks} фрагментов)",
+                text=f"🗑 Удалить: {btn_name} ({chunks}ч.)",
                 callback_data=f"doc_del:{fhash}",
             )
         ])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад в память", callback_data="menu_memory")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад в память", callback_data="menu_memory"), get_close_button()])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_profile_keyboard(has_profile: bool = False) -> InlineKeyboardMarkup:
+    """Builds personal profile action keyboard."""
+    edit_text = "📝 Редактировать анкету" if has_profile else "📝 Заполнить анкету"
+    buttons = [
+        [InlineKeyboardButton(text="💎 Управление подпиской", callback_data="menu_subscription")],
+        [InlineKeyboardButton(text=edit_text, callback_data="profile_edit")],
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main"), get_close_button()],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -212,7 +207,7 @@ def get_subscription_keyboard(plans: List[Dict[str, Any]]) -> InlineKeyboardMark
                 callback_data=f"buy_sub:{pid}",
             )
         ])
-    buttons.append([InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")])
+    buttons.append([InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main"), get_close_button()])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -234,6 +229,6 @@ def get_admin_keyboard(is_maintenance: bool = False) -> InlineKeyboardMarkup:
                 callback_data="admin_toggle_maintenance",
             )
         ],
-        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main")],
+        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_main"), get_close_button()],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

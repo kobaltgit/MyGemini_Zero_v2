@@ -6,7 +6,7 @@ Manages encrypted message history, token tracking, message retrieval, and data c
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from cryptography.fernet import Fernet
 
 from database.models.conversation import Conversation
@@ -169,3 +169,13 @@ class ConversationRepository:
 
         await self.session.commit()
         logger.warning(f"Complete data wipe executed for user {user_id}", extra={"user_id": user_id})
+
+    async def get_user_message_count(self, user_id: int) -> int:
+        """Returns the total number of messages sent by user across all dialogs."""
+        stmt = select(func.count(Conversation.conversation_id)).where(
+            Conversation.user_id == user_id,
+            Conversation.role == "user",
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
