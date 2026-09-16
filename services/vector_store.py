@@ -87,7 +87,7 @@ class VectorStoreManager:
         embeddings = []
         for text in texts:
             resp = await self.genai_client.aio.models.embed_content(
-                model="text-embedding-004",
+                model="gemini-embedding-001",
                 contents=text,
             )
             # Handle Matryoshka truncation or standard 768 vector
