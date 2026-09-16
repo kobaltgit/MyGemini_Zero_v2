@@ -105,7 +105,7 @@ async def handle_dialogs_command(message: Message):
     buttons = []
     for d in dialogs:
         is_active = d.dialog_id == active_id
-        icon = "🔘 " if is_active else "⚪️ "
+        icon = "🟢 " if is_active else "▫️ "
         docs = vm.get_dialog_documents(d.dialog_id)
         doc_icon = "📎 " if docs else ""
 
@@ -131,12 +131,14 @@ async def handle_dialogs_command(message: Message):
 
     dlg_header = (
         "🗂 <b>Ваши диалоги:</b>\n\n"
-        "🔘 — активный диалог (текущий контекст)\n"
+        "🟢 — активный диалог (текущий контекст)\n"
+        "▫️ — сохранённый диалог\n"
         "📎 — диалог содержит прикреплённые документы (RAG-память)\n\n"
         "Нажмите на название диалога, чтобы переключиться на него:"
         if lang_code == "ru"
         else "🗂 <b>Your Dialogues:</b>\n\n"
-        "🔘 — active dialogue (current context)\n"
+        "🟢 — active dialogue (current context)\n"
+        "▫️ — saved dialogue\n"
         "📎 — dialogue has attached documents (RAG memory)\n\n"
         "Click a dialogue name to switch to it:"
     )
