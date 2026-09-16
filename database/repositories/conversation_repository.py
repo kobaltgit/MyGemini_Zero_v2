@@ -129,6 +129,48 @@ class ConversationRepository:
             })
         return messages
 
+    async def get_messages_by_date(
+        self,
+        user_id: int,
+        date_str: str,
+        fernet_instance: Fernet,
+        dialog_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieves decrypted messages for a specific date (YYYY-MM-DD).
+        """
+        start_ts = f"{date_str} 00:00:00"
+        end_ts = f"{date_str} 23:59:59"
+
+        stmt = select(Conversation).where(
+            Conversation.user_id == user_id,
+            Conversation.timestamp >= start_ts,
+            Conversation.timestamp <= end_ts,
+        )
+        if dialog_id:
+            stmt = stmt.where(Conversation.dialog_id == dialog_id)
+        stmt = stmt.order_by(Conversation.timestamp.asc())
+
+        result = await self.session.execute(stmt)
+        conversations = result.scalars().all()
+
+        messages = []
+        for c in conversations:
+            text = ""
+            if c.message_text:
+                raw_blob = c.message_text
+                enc_str = raw_blob.decode("utf-8") if isinstance(raw_blob, (bytes, bytearray)) else str(raw_blob)
+                decrypted = decrypt_data(enc_str, fernet_instance)
+                text = decrypted or "[Ошибка дешифрования]"
+            messages.append({
+                "conversation_id": c.conversation_id,
+                "role": c.role,
+                "text": text,
+                "timestamp": c.timestamp,
+                "dialog_id": c.dialog_id,
+            })
+        return messages
+
     async def delete_messages_older_than(self, user_id: int, cutoff_datetime: str) -> int:
         """Deletes messages older than cutoff timestamp."""
         stmt = (
@@ -138,6 +180,7 @@ class ConversationRepository:
         res = await self.session.execute(stmt)
         await self.session.commit()
         return res.rowcount
+
 
     async def clear_user_data(self, user_id: int) -> None:
         """

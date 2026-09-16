@@ -1,7 +1,9 @@
 """
 Authentication & Zero-Knowledge Vault Handler for MyGemini Zero v2.
-Processes WebApp modal inputs (masked with dots) and secure chat fallbacks.
-Handles master password setup, vault unlock, panic wipe, and session lock.
+Processes secure chat inputs and WebApp modal data.
+Handles two-step master password setup, two-step panic password setup,
+vault unlock, panic wipe, and session lock.
+Provides instant deletion of secret messages and Cancel buttons on all prompts.
 """
 
 import json
@@ -20,8 +22,12 @@ from keyboards.inline import (
     get_unlock_keyboard,
     get_set_password_keyboard,
     get_api_key_input_keyboard,
+    get_cancel_keyboard,
+    get_close_button,
 )
 from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
+from core.ui_helpers import safe_edit_message_text, safe_answer_callback
+from core.localization import get_text
 from core.config import settings
 from core.logger import get_logger
 
@@ -31,118 +37,20 @@ router = Router(name="auth")
 
 class AuthStates(StatesGroup):
     waiting_for_password_setup = State()
+    waiting_for_password_confirm = State()
     waiting_for_password_unlock = State()
     waiting_for_api_key = State()
     waiting_for_panic_setup = State()
+    waiting_for_panic_confirm = State()
 
 
-@router.message(F.web_app_data)
-async def handle_webapp_data(message: Message, state: FSMContext):
-    """
-    Receives data securely submitted from the Telegram WebApp modal popup.
-    Input in the popup is masked with dots (••••••) and never appears in chat history.
-    """
-    user_id = message.from_user.id
-    raw_data = message.web_app_data.data
-
+async def safe_instant_delete(message: Message):
+    """Deletes sensitive message after a fraction of a second."""
     try:
-        payload = json.loads(raw_data)
-    except Exception as e:
-        logger.error(f"Invalid JSON from WebApp: {e}")
-        await message.answer("❌ Ошибка обработки данных из веб-окна.")
-        return
-
-    action = payload.get("action")
-    value = payload.get("value", "").strip()
-
-    if not value:
-        await message.answer("⚠️ Введено пустое значение.")
-        return
-
-    async with async_session_maker() as session:
-        user_repo = UserRepository(session)
-        conv_repo = ConversationRepository(session)
-
-        # 1. Action: Password (Setup or Unlock)
-        if action == "password":
-            has_password = await user_repo.is_master_password_set(user_id)
-
-            if not has_password:
-                # Setting password for the first time
-                await user_repo.set_master_password(user_id, value)
-                salt = await user_repo.get_salt(user_id)
-                fernet = get_fernet_instance(value, salt)
-                session_manager.unlock_session(user_id, fernet)
-
-                await message.answer(
-                    "✅ <b>Мастер-пароль успешно установлен!</b>\n\n"
-                    "Ваше хранилище активировано и разблокировано. Теперь все сообщения и ключи шифруются на лету.\n\n"
-                    "⚠️ <i>Обязательно запомните или сохраните мастер-пароль. Если вы его забудете, "
-                    "восстановить доступ к сохранённым диалогам будет невозможно!</i>",
-                    reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
-                    parse_mode="HTML",
-                )
-                return
-
-            # Check if panic password was entered
-            if await user_repo.verify_panic_password(user_id, value):
-                # Panic wipe triggered!
-                await conv_repo.clear_user_data(user_id)
-                session_manager.lock_session(user_id)
-                await message.answer(
-                    "🚨 <b>Аварийный сброс выполнен.</b>\n"
-                    "Все диалоги, сообщения, профиль и ключи были безвозвратно удалены из базы данных.",
-                    parse_mode="HTML",
-                )
-                return
-
-            # Normal unlock
-            if await user_repo.verify_master_password(user_id, value):
-                salt = await user_repo.get_salt(user_id)
-                fernet = get_fernet_instance(value, salt)
-                session_manager.unlock_session(user_id, fernet)
-
-                await message.answer(
-                    "🔓 <b>Сейф успешно разблокирован!</b>\n"
-                    "Сессия активна. Диалоги расшифрованы и готовы к продолжению.",
-                    reply_markup=get_main_reply_keyboard(is_admin=(user_id == settings.ADMIN_USER_ID)),
-                    parse_mode="HTML",
-                )
-            else:
-                await message.answer(
-                    "❌ <b>Неверный мастер-пароль!</b>\nПопробуйте ещё раз:",
-                    reply_markup=get_unlock_keyboard(),
-                    parse_mode="HTML",
-                )
-
-        # 2. Action: Set API Key
-        elif action == "apikey":
-            fernet = session_manager.get_fernet(user_id)
-            if not fernet:
-                await message.answer(
-                    "🔒 Сначала разблокируйте сейф мастер-паролем, чтобы зашифровать ключ.",
-                    reply_markup=get_unlock_keyboard(),
-                )
-                return
-
-            await user_repo.set_api_key(user_id, value, fernet)
-            await message.answer(
-                "🔑 <b>API-ключ Google Gemini успешно сохранён!</b>\n\n"
-                "Ключ зашифрован вашим мастер-паролем (Zero-Knowledge) и надёжно сохранён.",
-                reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
-                parse_mode="HTML",
-            )
-
-        # 3. Action: Panic Password Setup
-        elif action == "panic":
-            await user_repo.set_panic_password(user_id, value)
-            await message.answer(
-                "🚨 <b>Паник-пароль успешно установлен!</b>\n\n"
-                "Если в окне ввода мастер-пароля ввести этот паник-пароль, бот моментально и безвозвратно сотрёт "
-                "всю историю сообщений, файлы памяти и ключи.",
-                reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
-                parse_mode="HTML",
-            )
+        await asyncio.sleep(0.25)
+        await message.delete()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "vault_lock")
@@ -151,34 +59,64 @@ async def handle_vault_lock(callback: CallbackQuery):
     user_id = callback.from_user.id
     session_manager.lock_session(user_id)
 
-    await callback.message.edit_text(
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    text = (
         "🔒 <b>Сейф заблокирован.</b>\n"
         "Ключи дешифрования удалены из оперативной памяти сервера.\n"
-        "Для разблокировки введите ваш мастер-пароль:",
-        reply_markup=get_unlock_keyboard(),
+        "Для разблокировки введите ваш мастер-пароль:"
+        if lang_code == "ru"
+        else "🔒 <b>Vault locked.</b>\n"
+        "Decryption keys have been purged from memory.\n"
+        "Enter your master password to unlock:"
+    )
+
+    await safe_edit_message_text(
+        callback.message,
+        text,
+        reply_markup=get_unlock_keyboard(lang_code),
         parse_mode="HTML",
     )
     try:
         await callback.message.answer(
-            "🔐 Введите мастер-пароль:",
-            reply_markup=get_locked_reply_keyboard(),
+            "🔐 Введите мастер-пароль:" if lang_code == "ru" else "🔐 Enter master password:",
+            reply_markup=get_locked_reply_keyboard(lang_code),
         )
     except Exception:
         pass
-    await callback.answer("Сейф заблокирован")
+    await safe_answer_callback(callback, "Сейф заблокирован" if lang_code == "ru" else "Vault locked")
 
 
 @router.callback_query(F.data == "vault_unlock_chat")
 async def handle_vault_unlock_chat_prompt(callback: CallbackQuery, state: FSMContext):
-    """Fallback prompt for unlocking via chat."""
+    """Prompt for unlocking via chat."""
+    await safe_answer_callback(callback)
     await state.set_state(AuthStates.waiting_for_password_unlock)
-    await callback.message.edit_text(
-        "⌨️ Введите ваш мастер-пароль в чат.\n\n"
+    user_id = callback.from_user.id
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    prompt = (
+        "⌨️ <b>Введите ваш мастер-пароль в чат:</b>\n\n"
         "ℹ️ <i>Ваше сообщение с паролем будет автоматически удалено ботом через долю секунды, "
-        "чтобы не оставаться в истории переписки.</i>",
+        "чтобы не оставаться в истории переписки.</i>"
+        if lang_code == "ru"
+        else "⌨️ <b>Enter your master password in chat:</b>\n\n"
+        "ℹ️ <i>Your password message will be automatically deleted in a fraction of a second.</i>"
+    )
+
+    await safe_edit_message_text(
+        callback.message,
+        prompt,
+        reply_markup=get_cancel_keyboard(callback_data="back_to_main", lang_code=lang_code),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.message(AuthStates.waiting_for_password_unlock)
@@ -186,86 +124,303 @@ async def process_chat_password_unlock(message: Message, state: FSMContext):
     """Processes chat fallback password entry and deletes the message immediately."""
     user_id = message.from_user.id
     password = message.text.strip() if message.text else ""
-
-    # Instant deletion of password message
-    try:
-        await asyncio.sleep(0.25)
-        await message.delete()
-    except Exception:
-        pass
-
+    await safe_instant_delete(message)
     await state.clear()
 
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
         conv_repo = ConversationRepository(session)
 
-        # Check panic password first
+        # 1. Check panic password first
         if await user_repo.verify_panic_password(user_id, password):
             await conv_repo.clear_user_data(user_id)
             session_manager.lock_session(user_id)
-            await message.answer("🚨 <b>Аварийный сброс выполнен.</b> Все данные удалены.")
+            msg = (
+                "🚨 <b>Аварийный сброс выполнен.</b>\n"
+                "Все диалоги, сообщения, профиль и ключи были безвозвратно удалены из базы данных."
+                if lang_code == "ru"
+                else "🚨 <b>Emergency wipe executed.</b>\n"
+                "All dialogues, messages, profile, and keys have been permanently wiped."
+            )
+            await message.answer(msg, parse_mode="HTML")
             return
 
+        # 2. Check master password
         if await user_repo.verify_master_password(user_id, password):
             salt = await user_repo.get_salt(user_id)
             fernet = get_fernet_instance(password, salt)
             session_manager.unlock_session(user_id, fernet)
 
-            await message.answer(
+            success_text = (
                 "🔓 <b>Сейф успешно разблокирован!</b>\n"
-                "Сессия активна. Диалоги расшифрованы и готовы к продолжению.",
-                reply_markup=get_main_reply_keyboard(is_admin=(user_id == settings.ADMIN_USER_ID)),
+                "Сессия активна. Диалоги расшифрованы и готовы к продолжению."
+                if lang_code == "ru"
+                else "🔓 <b>Vault successfully unlocked!</b>\n"
+                "Session active. Dialogues decrypted and ready."
+            )
+            await message.answer(
+                success_text,
+                reply_markup=get_main_reply_keyboard(is_admin=(user_id == settings.ADMIN_USER_ID), lang_code=lang_code),
                 parse_mode="HTML",
             )
         else:
+            fail_text = (
+                "❌ <b>Неверный мастер-пароль!</b>\nПопробуйте ещё раз:"
+                if lang_code == "ru"
+                else "❌ <b>Incorrect master password!</b>\nPlease try again:"
+            )
             await message.answer(
-                "❌ <b>Неверный мастер-пароль.</b> Попробуйте ещё раз:",
-                reply_markup=get_unlock_keyboard(),
+                fail_text,
+                reply_markup=get_unlock_keyboard(lang_code),
                 parse_mode="HTML",
             )
 
 
 @router.callback_query(F.data == "vault_setup_chat")
 async def handle_vault_setup_chat_prompt(callback: CallbackQuery, state: FSMContext):
-    """Fallback prompt for setting password via chat."""
+    """Step 1 prompt for setting master password via chat."""
+    await safe_answer_callback(callback)
     await state.set_state(AuthStates.waiting_for_password_setup)
-    await callback.message.edit_text(
-        "⌨️ Введите новый мастер-пароль в чат.\n\n"
-        "ℹ️ <i>Сообщение будет мгновенно удалено сразу после прочтения.</i>",
+    user_id = callback.from_user.id
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    prompt = (
+        "🔐 <b>Создание мастер-пароля (Шаг 1 из 2):</b>\n\n"
+        "Придумайте и введите ваш <b>мастер-пароль</b> в чат.\n\n"
+        "⚠️ <i>Минимум 4 символа. Сообщение будет мгновенно удалено сразу после прочтения.</i>"
+        if lang_code == "ru"
+        else "🔐 <b>Create Master Password (Step 1 of 2):</b>\n\n"
+        "Enter your new <b>master password</b> in chat.\n\n"
+        "⚠️ <i>Minimum 4 characters. The message will be instantly deleted.</i>"
+    )
+
+    await safe_edit_message_text(
+        callback.message,
+        prompt,
+        reply_markup=get_cancel_keyboard(callback_data="close_menu", lang_code=lang_code),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.message(AuthStates.waiting_for_password_setup)
 async def process_chat_password_setup(message: Message, state: FSMContext):
-    """Sets master password from chat input."""
+    """Step 1: receives candidate password, prompts for confirmation."""
     user_id = message.from_user.id
     password = message.text.strip() if message.text else ""
+    await safe_instant_delete(message)
 
-    try:
-        await asyncio.sleep(0.25)
-        await message.delete()
-    except Exception:
-        pass
-
-    await state.clear()
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
 
     if len(password) < 4:
-        await message.answer("⚠️ Пароль слишком короткий (минимум 4 символа).", reply_markup=get_set_password_keyboard())
+        too_short = (
+            "⚠️ Пароль слишком короткий (минимум 4 символа). Попробуйте снова:"
+            if lang_code == "ru"
+            else "⚠️ Password too short (minimum 4 characters). Try again:"
+        )
+        await message.answer(too_short, reply_markup=get_cancel_keyboard(callback_data="close_menu", lang_code=lang_code))
+        return
+
+    await state.update_data(candidate_master_password=password)
+    await state.set_state(AuthStates.waiting_for_password_confirm)
+
+    confirm_prompt = (
+        "🔐 <b>Подтверждение пароля (Шаг 2 из 2):</b>\n\n"
+        "Отлично! А теперь, для подтверждения, **введите этот же пароль ещё раз**.\n\n"
+        "❗️ <i>ВАЖНО: Если вы забудете этот пароль, восстановить доступ к диалогам будет НЕВОЗМОЖНО. "
+        "У нас нет функции сброса пароля!</i>"
+        if lang_code == "ru"
+        else "🔐 <b>Confirm Password (Step 2 of 2):</b>\n\n"
+        "Great! Now, for confirmation, **enter this same password once more**.\n\n"
+        "❗️ <i>IMPORTANT: If you forget this password, recovering your data is IMPOSSIBLE. "
+        "There is no password reset feature!</i>"
+    )
+
+    await message.answer(
+        confirm_prompt,
+        reply_markup=get_cancel_keyboard(callback_data="close_menu", lang_code=lang_code),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(AuthStates.waiting_for_password_confirm)
+async def process_chat_password_confirm(message: Message, state: FSMContext):
+    """Step 2: verifies password confirmation and saves it."""
+    user_id = message.from_user.id
+    confirm_password = message.text.strip() if message.text else ""
+    await safe_instant_delete(message)
+
+    data = await state.get_data()
+    candidate = data.get("candidate_master_password", "")
+    await state.clear()
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if confirm_password != candidate:
+        mismatch_text = (
+            "❌ <b>Пароли не совпадают!</b>\nПожалуйста, начните установку пароля заново."
+            if lang_code == "ru"
+            else "❌ <b>Passwords do not match!</b>\nPlease start password setup again."
+        )
+        await message.answer(
+            mismatch_text,
+            reply_markup=get_set_password_keyboard(lang_code),
+            parse_mode="HTML",
+        )
         return
 
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
-        await user_repo.set_master_password(user_id, password)
+        await user_repo.set_master_password(user_id, confirm_password)
         salt = await user_repo.get_salt(user_id)
-        fernet = get_fernet_instance(password, salt)
+        fernet = get_fernet_instance(confirm_password, salt)
         session_manager.unlock_session(user_id, fernet)
 
+    success_text = (
+        "✅ <b>Мастер-пароль успешно установлен!</b>\n\n"
+        "Ваше зашифрованное хранилище активировано и разблокировано. "
+        "Теперь все сообщения и ключи шифруются на лету симметричным шифром Fernet.\n\n"
+        "Задайте любой вопрос или отправьте файл для начала работы!"
+        if lang_code == "ru"
+        else "✅ <b>Master password successfully set!</b>\n\n"
+        "Your encrypted vault is activated and unlocked. "
+        "All conversations and keys are now encrypted on the fly.\n\n"
+        "Ask any question or send a file to begin!"
+    )
+
     await message.answer(
-        "✅ <b>Мастер-пароль установлен!</b>\n\nСейф активирован и разблокирован.",
-        reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
+        success_text,
+        reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID), lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "panic_setup_start")
+async def handle_panic_setup_start(callback: CallbackQuery, state: FSMContext):
+    """Step 1 prompt for panic password setup."""
+    await safe_answer_callback(callback)
+    await state.set_state(AuthStates.waiting_for_panic_setup)
+    user_id = callback.from_user.id
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    prompt = (
+        "🚨 <b>Установка паник-пароля (Шаг 1 из 2):</b>\n\n"
+        "Придумайте и введите ваш **пароль паники** в чат.\n\n"
+        "⚠️ **Важно:** он *не должен* совпадать с вашим основным мастер-паролем."
+        if lang_code == "ru"
+        else "🚨 <b>Set Panic Password (Step 1 of 2):</b>\n\n"
+        "Enter your **panic password** in chat.\n\n"
+        "⚠️ **Important:** it *must not* match your master password."
+    )
+
+    await safe_edit_message_text(
+        callback.message,
+        prompt,
+        reply_markup=get_cancel_keyboard(callback_data="menu_settings", lang_code=lang_code),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(AuthStates.waiting_for_panic_setup)
+async def process_chat_panic_setup(message: Message, state: FSMContext):
+    """Step 1 of panic setup: checks candidate, requests confirmation."""
+    user_id = message.from_user.id
+    panic_pwd = message.text.strip() if message.text else ""
+    await safe_instant_delete(message)
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+        if await user_repo.verify_master_password(user_id, panic_pwd):
+            same_err = (
+                "❌ Пароль паники не может совпадать с вашим основным мастер-паролем. Придумайте другой:"
+                if lang_code == "ru"
+                else "❌ Panic password cannot match your main master password. Try another one:"
+            )
+            await message.answer(same_err, reply_markup=get_cancel_keyboard(callback_data="menu_settings", lang_code=lang_code))
+            return
+
+    if len(panic_pwd) < 4:
+        too_short = "⚠️ Пароль паники слишком короткий (минимум 4 символа)." if lang_code == "ru" else "⚠️ Panic password too short (minimum 4 characters)."
+        await message.answer(too_short, reply_markup=get_cancel_keyboard(callback_data="menu_settings", lang_code=lang_code))
+        return
+
+    await state.update_data(candidate_panic=panic_pwd)
+    await state.set_state(AuthStates.waiting_for_panic_confirm)
+
+    confirm_prompt = (
+        "🚨 <b>Подтверждение паник-пароля (Шаг 2 из 2):</b>\n\n"
+        "Пожалуйста, введите пароль паники ещё раз для подтверждения:"
+        if lang_code == "ru"
+        else "🚨 <b>Confirm Panic Password (Step 2 of 2):</b>\n\n"
+        "Please enter your panic password once more for confirmation:"
+    )
+
+    await message.answer(
+        confirm_prompt,
+        reply_markup=get_cancel_keyboard(callback_data="menu_settings", lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.message(AuthStates.waiting_for_panic_confirm)
+async def process_chat_panic_confirm(message: Message, state: FSMContext):
+    """Step 2 of panic setup: verifies confirmation and saves panic password."""
+    user_id = message.from_user.id
+    confirm_pwd = message.text.strip() if message.text else ""
+    await safe_instant_delete(message)
+
+    data = await state.get_data()
+    candidate = data.get("candidate_panic", "")
+    await state.clear()
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if confirm_pwd != candidate:
+        mismatch = (
+            "❌ Пароли паники не совпадают. Начните настройку заново."
+            if lang_code == "ru"
+            else "❌ Panic passwords do not match. Please restart setup."
+        )
+        await message.answer(mismatch, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]))
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.set_panic_password(user_id, confirm_pwd)
+
+    success_msg = (
+        "✅ <b>Пароль паники успешно установлен!</b>\n\n"
+        "Если в окне ввода пароля ввести этот паник-пароль, бот моментально "
+        "сотрёт всю историю переписки, файлы векторной памяти и ваш API-ключ."
+        if lang_code == "ru"
+        else "✅ <b>Panic password successfully set!</b>\n\n"
+        "If entered upon unlock, the bot will immediately wipe all dialogues, vector memory, and your API key."
+    )
+
+    await message.answer(
+        success_msg,
+        reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID), lang_code=lang_code),
         parse_mode="HTML",
     )
 
@@ -273,13 +428,31 @@ async def process_chat_password_setup(message: Message, state: FSMContext):
 @router.callback_query(F.data == "api_key_chat_input")
 async def handle_api_key_chat_prompt(callback: CallbackQuery, state: FSMContext):
     """Fallback chat input for API key."""
+    await safe_answer_callback(callback)
     await state.set_state(AuthStates.waiting_for_api_key)
-    await callback.message.edit_text(
-        "⌨️ Отправьте ваш Google Gemini API-ключ ответным сообщением.\n\n"
-        "ℹ️ <i>Ключ будет удален из чата сразу после сохранения.</i>",
+    user_id = callback.from_user.id
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    prompt = (
+        "⌨️ <b>Отправьте ваш Google Gemini API-ключ:</b>\n\n"
+        "Ключ начинается на <code>AIzaSy...</code>.\n\n"
+        "ℹ️ <i>Сообщение будет мгновенно удалено сразу после сохранения.</i>"
+        if lang_code == "ru"
+        else "⌨️ <b>Send your Google Gemini API key:</b>\n\n"
+        "The key starts with <code>AIzaSy...</code>.\n\n"
+        "ℹ️ <i>The message will be deleted instantly after saving.</i>"
+    )
+
+    await safe_edit_message_text(
+        callback.message,
+        prompt,
+        reply_markup=get_cancel_keyboard(callback_data="menu_settings", lang_code=lang_code),
         parse_mode="HTML",
     )
-    await callback.answer()
 
 
 @router.message(AuthStates.waiting_for_api_key)
@@ -287,26 +460,31 @@ async def process_chat_api_key(message: Message, state: FSMContext):
     """Saves API key from chat."""
     user_id = message.from_user.id
     api_key = message.text.strip() if message.text else ""
-
-    try:
-        await asyncio.sleep(0.25)
-        await message.delete()
-    except Exception:
-        pass
-
+    await safe_instant_delete(message)
     await state.clear()
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
 
     fernet = session_manager.get_fernet(user_id)
     if not fernet:
-        await message.answer("🔒 Сейф заблокирован. Разблокируйте его для сохранения ключа.", reply_markup=get_unlock_keyboard())
+        err = "🔒 Сейф заблокирован. Разблокируйте его для сохранения ключа." if lang_code == "ru" else "🔒 Vault is locked."
+        await message.answer(err, reply_markup=get_unlock_keyboard(lang_code))
         return
 
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         await user_repo.set_api_key(user_id, api_key, fernet)
 
+    done = (
+        "🔑 <b>API-ключ Google Gemini успешно сохранён и зашифрован!</b>"
+        if lang_code == "ru"
+        else "🔑 <b>Google Gemini API key saved and encrypted!</b>"
+    )
     await message.answer(
-        "🔑 <b>API-ключ сохранён и зашифрован!</b>",
-        reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID)),
+        done,
+        reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID), lang_code=lang_code),
         parse_mode="HTML",
     )

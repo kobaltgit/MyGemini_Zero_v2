@@ -93,25 +93,41 @@ class AuthMiddleware(BaseMiddleware):
         async with async_session_maker() as session:
             user_repo = UserRepository(session)
             settings_repo = SettingsRepository(session)
+            user = await user_repo.get_by_id(user_id)
+
+            lang_code = "ru"
+            if user and user.language_code:
+                lang_code = user.language_code
+            elif event.from_user and event.from_user.language_code:
+                lang_code = "ru" if event.from_user.language_code.startswith("ru") else "en"
 
             # Check maintenance mode
             is_maintenance = await settings_repo.is_maintenance_mode()
             is_admin = user_id == settings.ADMIN_USER_ID
 
             if is_maintenance and not is_admin:
+                maintenance_text = (
+                    "🛠 Бот временно находится на техническом обслуживании. Пожалуйста, попробуйте позже."
+                    if lang_code == "ru"
+                    else "🛠 The bot is temporarily under maintenance. Please try again later."
+                )
                 if isinstance(event, Message):
-                    await event.answer("🛠 Бот временно находится на техническом обслуживании. Пожалуйста, попробуйте позже.")
+                    await event.answer(maintenance_text)
                 elif isinstance(event, CallbackQuery):
-                    await event.answer("🛠 Бот на техническом обслуживании.", show_alert=True)
+                    await event.answer(maintenance_text, show_alert=True)
                 return
 
             # Check user blocked
-            user = await user_repo.get_by_id(user_id)
             if user and user.is_blocked:
+                blocked_text = (
+                    "⛔️ Ваш аккаунт заблокирован администратором."
+                    if lang_code == "ru"
+                    else "⛔️ Your account has been blocked by an administrator."
+                )
                 if isinstance(event, Message):
-                    await event.answer("⛔️ Ваш аккаунт заблокирован администратором.")
+                    await event.answer(blocked_text)
                 elif isinstance(event, CallbackQuery):
-                    await event.answer("⛔️ Доступ ограничен.", show_alert=True)
+                    await event.answer(blocked_text, show_alert=True)
                 return
 
             # Inject session & repositories into handler data
@@ -119,5 +135,7 @@ class AuthMiddleware(BaseMiddleware):
             data["fernet"] = fernet
             data["session_manager"] = session_manager
             data["db_user"] = user
+            data["lang_code"] = lang_code
 
         return await handler(event, data)
+

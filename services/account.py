@@ -1,27 +1,35 @@
 """
 Personal Account & User Profile Service for MyGemini Zero v2.
 Calculates user titles/ranks, message statistics, days active, subscription metrics,
-and formats the personal account card.
+and formats the personal account card in Russian or English.
 """
 
 from datetime import datetime
 from typing import Dict, Any, Optional
-from cryptography.fernet import Fernet
-
 from database.models.user import User
 from core.config import settings
 
 
-def get_user_rank(message_count: int) -> str:
+def get_user_rank(message_count: int, lang_code: str = "ru") -> str:
     """Calculates user title/rank based on total sent messages."""
-    if message_count >= 1000:
-        return "👑 Легенда"
-    elif message_count >= 250:
-        return "🥇 Мастер общения"
-    elif message_count >= 50:
-        return "🥈 Ветеран чата"
+    if lang_code == "ru":
+        if message_count >= 1000:
+            return "👑 Легенда"
+        elif message_count >= 250:
+            return "🥇 Мастер общения"
+        elif message_count >= 50:
+            return "🥈 Ветеран чата"
+        else:
+            return "🥉 Новичок"
     else:
-        return "🥉 Новичок"
+        if message_count >= 1000:
+            return "👑 Legend"
+        elif message_count >= 250:
+            return "🥇 Master Communicator"
+        elif message_count >= 50:
+            return "🥈 Chat Veteran"
+        else:
+            return "🥉 Novice"
 
 
 def format_account_card(
@@ -29,11 +37,12 @@ def format_account_card(
     message_count: int,
     profile_data: Optional[Dict[str, Any]] = None,
     is_vault_unlocked: bool = False,
+    lang_code: str = "ru",
 ) -> str:
     """
     Renders user profile and statistics card for 'Личный кабинет'.
     """
-    rank = get_user_rank(message_count)
+    rank = get_user_rank(message_count, lang_code=lang_code)
     now = datetime.now()
 
     # Days with bot
@@ -49,7 +58,7 @@ def format_account_card(
             reg_date_str = date_field[:10]
 
     # Subscription details
-    is_admin = user.user_id == settings.ADMIN_USER_ID
+    is_admin = (user.user_id == settings.ADMIN_USER_ID)
     sub_days_left_str = ""
     is_sub_active = is_admin
     if user.subscription_end_date:
@@ -57,11 +66,11 @@ def format_account_card(
             end_dt = datetime.strptime(user.subscription_end_date[:10], "%Y-%m-%d")
             diff = (end_dt.date() - now.date()).days
             if diff >= 0:
-                sub_days_left_str = f" (осталось {diff} дн.)"
+                sub_days_left_str = f" (осталось {diff} дн.)" if lang_code == "ru" else f" ({diff} days left)"
                 if user.subscription_status == "active":
                     is_sub_active = True
             else:
-                sub_days_left_str = " (истекла)"
+                sub_days_left_str = " (истекла)" if lang_code == "ru" else " (expired)"
                 is_sub_active = False
         except Exception:
             pass
@@ -70,51 +79,84 @@ def format_account_card(
 
     sub_status_icon = "🟢" if is_sub_active else "⚪️"
     if is_admin:
-        status_name = "Администратор (Бессрочно)"
+        status_name = "Администратор (Бессрочно)" if lang_code == "ru" else "Administrator (Lifetime)"
     elif is_sub_active:
-        status_name = "Активна"
-    elif sub_days_left_str == " (истекла)":
-        status_name = "Истекла"
+        status_name = "Активна" if lang_code == "ru" else "Active"
+    elif "истекла" in sub_days_left_str or "expired" in sub_days_left_str:
+        status_name = "Истекла" if lang_code == "ru" else "Expired"
     else:
         status_name = user.subscription_status.capitalize()
 
-    sub_line = f"{sub_status_icon} <b>Подписка:</b> {status_name}{sub_days_left_str}"
+    sub_label = "Подписка:" if lang_code == "ru" else "Subscription:"
+    valid_until_label = "Действует до:" if lang_code == "ru" else "Valid until:"
+    sub_line = f"{sub_status_icon} <b>{sub_label}</b> {status_name}{sub_days_left_str}"
     if not is_admin and user.subscription_end_date:
-        sub_line += f"\n   • <b>Действует до:</b> {user.subscription_end_date[:10]}"
+        sub_line += f"\n   • <b>{valid_until_label}</b> {user.subscription_end_date[:10]}"
 
     # Model and API key
     model_name = user.gemini_model or "gemini-2.5-flash"
-    api_key_status = "✅ Установлен (Zero-Knowledge)" if user.api_key else "❌ Используется общий серверный"
+    if lang_code == "ru":
+        api_key_status = "✅ Установлен (Zero-Knowledge)" if user.api_key else "❌ Не установлен"
+        card_title = f"👤 <b>Личный кабинет: {user.first_name or 'Пользователь'}</b>\n"
+        rank_line = f"🏆 <b>Звание:</b> {rank}"
+        msg_line = f"💬 <b>Всего сообщений:</b> {message_count}"
+        days_line = f"🗓️ <b>С нами:</b> {days_active} дн. (с {reg_date_str})"
+        model_line = f"🤖 <b>Текущая модель:</b> <code>{model_name}</code>"
+        key_line = f"🔑 <b>Личный API-ключ:</b> {api_key_status}"
+    else:
+        api_key_status = "✅ Set (Zero-Knowledge)" if user.api_key else "❌ Not set"
+        card_title = f"👤 <b>Personal Profile: {user.first_name or 'User'}</b>\n"
+        rank_line = f"🏆 <b>Rank:</b> {rank}"
+        msg_line = f"💬 <b>Total Messages:</b> {message_count}"
+        days_line = f"🗓️ <b>Member for:</b> {days_active} days (since {reg_date_str})"
+        model_line = f"🤖 <b>Current Model:</b> <code>{model_name}</code>"
+        key_line = f"🔑 <b>Personal API Key:</b> {api_key_status}"
 
     lines = [
-        f"👤 <b>Личный кабинет: {user.first_name or 'Пользователь'}</b>\n",
-        f"🏆 <b>Звание:</b> {rank}",
-        f"💬 <b>Всего сообщений:</b> {message_count}",
-        f"🗓️ <b>С нами:</b> {days_active} дн. (с {reg_date_str})",
+        card_title,
+        rank_line,
+        msg_line,
+        days_line,
         "",
         sub_line,
         "",
-        f"🤖 <b>Текущая модель:</b> <code>{model_name}</code>",
-        f"🔑 <b>Личный API-ключ:</b> {api_key_status}",
+        model_line,
+        key_line,
     ]
 
-    # Profile questionnaire section
+    # Profile questionnaire section (8 questions)
     if profile_data:
-        lines.append("\n📝 <b>Анкета пользователя:</b>")
-        if profile_data.get("role"):
-            lines.append(f"   • <b>Роль / Профессия:</b> {profile_data['role']}")
-        if profile_data.get("field"):
-            lines.append(f"   • <b>Сфера:</b> {profile_data['field']}")
-        if profile_data.get("stack"):
-            lines.append(f"   • <b>Стек / Инструменты:</b> {profile_data['stack']}")
-        if profile_data.get("projects"):
-            lines.append(f"   • <b>Текущие проекты:</b> {profile_data['projects']}")
-        if profile_data.get("goals"):
-            lines.append(f"   • <b>Цели общения:</b> {profile_data['goals']}")
+        q_title = "\n📝 <b>Анкета пользователя:</b>" if lang_code == "ru" else "\n📝 <b>User Questionnaire:</b>"
+        lines.append(q_title)
+        field_labels = {
+            "role": ("Роль / Профессия", "Role / Profession"),
+            "industry": ("Сфера", "Industry"),
+            "projects": ("Проекты", "Projects"),
+            "stack": ("Инструменты / Стек", "Tools / Stack"),
+            "purpose": ("Цель использования", "Main Purpose"),
+            "style": ("Стиль общения", "Communication Style"),
+            "hobby": ("Хобби", "Hobbies"),
+            "rules": ("Правила", "Rules"),
+        }
+        for f_key, (ru_lbl, en_lbl) in field_labels.items():
+            val = profile_data.get(f_key)
+            if val and val != "-":
+                lbl = ru_lbl if lang_code == "ru" else en_lbl
+                lines.append(f"   • <b>{lbl}:</b> {val}")
     else:
         if is_vault_unlocked:
-            lines.append("\nℹ️ <i>Анкета профиля ещё не заполнена. Заполните её, чтобы Gemini лучше понимал ваши задачи и контекст.</i>")
+            no_prof = (
+                "\nℹ️ <i>Анкета профиля ещё не заполнена. Заполните её, чтобы Gemini лучше понимал ваши задачи и контекст.</i>"
+                if lang_code == "ru"
+                else "\nℹ️ <i>Profile questionnaire not filled yet. Fill it to give Gemini personal context.</i>"
+            )
+            lines.append(no_prof)
         else:
-            lines.append("\n🔒 <i>Сейф заблокирован. Разблокируйте мастер-паролем для просмотра зашифрованной анкеты.</i>")
+            locked_prof = (
+                "\n🔒 <i>Сейф заблокирован. Разблокируйте мастер-паролем для просмотра зашифрованной анкеты.</i>"
+                if lang_code == "ru"
+                else "\n🔒 <i>Vault is locked. Unlock with master password to view encrypted questionnaire.</i>"
+            )
+            lines.append(locked_prof)
 
     return "\n".join(lines)

@@ -31,6 +31,10 @@ async def setup_bot_commands(bot: Bot) -> None:
         BotCommand(command="rename", description="✏️ Переименовать текущий диалог"),
         BotCommand(command="settings", description="⚙️ Настройки моделей, персон и ключа"),
         BotCommand(command="documents", description="📄 Документы в памяти диалога (RAG)"),
+        BotCommand(command="history", description="📅 История сообщений по датам"),
+        BotCommand(command="guide", description="📚 Интерактивное руководство пользователя"),
+        BotCommand(command="translate", description="🌐 Быстрый переводчик"),
+        BotCommand(command="feedback", description="✉️ Обратная связь / поддержка"),
         BotCommand(command="memorize", description="📎 Инструкция по отправке документов"),
         BotCommand(command="reset", description="🔄 Сброс контекста диалога"),
         BotCommand(command="help", description="❓ Справка по всем возможностям"),
@@ -50,6 +54,13 @@ async def main() -> None:
     setup_logging()
     logger.info("Starting MyGemini Zero v2...")
 
+    # Preload user guide markdown files
+    try:
+        from services.guide_manager import load_guides
+        load_guides()
+    except Exception as e:
+        logger.warning(f"Could not preload guides: {e}")
+
     if not settings.BOT_TOKEN:
         logger.error("BOT_TOKEN is not configured! Please provide it in .env file.")
         print("ОШИБКА: BOT_TOKEN не установлен в файле .env!")
@@ -58,6 +69,7 @@ async def main() -> None:
     # Initialize database and tables
     logger.info("Initializing database...")
     await init_db()
+
 
     # Initialize bot and dispatcher
     bot = Bot(

@@ -262,3 +262,10 @@ class UserRepository:
         stmt = update(User).where(User.user_id == user_id).values(is_blocked=1 if is_blocked else 0)
         await self.session.execute(stmt)
         await self.session.commit()
+
+    async def reset_api_key(self, user_id: int) -> None:
+        """Resets user's encrypted API key."""
+        stmt = update(User).where(User.user_id == user_id).values(api_key=None)
+        await self.session.execute(stmt)
+        await self.session.commit()
+
