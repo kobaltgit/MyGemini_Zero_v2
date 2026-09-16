@@ -150,15 +150,15 @@ async def handle_user_message(message: Message, bot: Bot):
         role = "user" if h["role"] == "user" else "model"
         text_val = h.get("text", "")
         if text_val and not text_val.startswith("[Ошибка"):
-            gemini_contents.append({"role": role, "parts": [{"text": text_val}]})
+            gemini_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text_val)]))
 
     # Current user turn
     current_parts = []
     if user_text:
-        current_parts.append(user_text)
+        current_parts.append(types.Part.from_text(text=user_text))
     current_parts.extend(multimodal_parts)
 
-    gemini_contents.append({"role": "user", "parts": current_parts})
+    gemini_contents.append(types.Content(role="user", parts=current_parts))
 
     # 7. Build System Instruction (Persona + Style + RAG)
     persona_key = user.active_persona or "default"
@@ -197,8 +197,14 @@ async def handle_user_message(message: Message, bot: Bot):
 
     except Exception as e:
         logger.error(f"Generation error: {e}")
-        await throttler.finalize()
-        await message.answer(f"⚠️ Ошибка генерации ответа: {e}")
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=placeholder_msg.message_id)
+        except Exception:
+            pass
+        err_msg = str(e)
+        if len(err_msg) > 1000:
+            err_msg = err_msg[:1000] + "... [сообщение обрезано]"
+        await message.answer(f"⚠️ Ошибка генерации ответа:\n{err_msg}")
         return
 
     # 9. Save encrypted messages to DB
