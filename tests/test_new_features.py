@@ -142,3 +142,21 @@ def test_inline_keyboards_have_close_button():
     all_callbacks_docs = [btn.callback_data for row in kb_docs.inline_keyboard for btn in row if btn.callback_data]
     assert "close_menu" in all_callbacks_docs
     assert "doc_del:abc" in all_callbacks_docs
+
+
+@pytest.mark.asyncio
+async def test_render_settings_view():
+    """Verifies that render_settings_view executes cleanly without any attribute errors."""
+    from handlers.settings import render_settings_view
+    from core.database import init_db, async_session_maker
+    from database.repositories import UserRepository
+
+    await init_db()
+    async with async_session_maker() as session:
+        repo = UserRepository(session)
+        await repo.add_or_update_user(user_id=999999, username="settingstest", first_name="Test", last_name="User")
+
+    text, kb = await render_settings_view(999999)
+    assert "Настройки AI-ассистента" in text
+    assert len(kb.inline_keyboard) > 0
+

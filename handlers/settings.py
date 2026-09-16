@@ -4,8 +4,9 @@ Manages AI model selection with Google Search badges (🌐),
 persona switching, communication styles, and API key configuration.
 """
 
+from typing import Tuple
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 
 from core.database import async_session_maker
 from database.repositories import UserRepository
@@ -23,11 +24,8 @@ from middlewares.auth import session_manager
 router = Router(name="settings")
 
 
-@router.callback_query(F.data == "menu_settings")
-async def handle_settings_menu(callback: CallbackQuery):
-    """Renders the settings menu with user preferences."""
-    user_id = callback.from_user.id
-
+async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]:
+    """Generates text and inline keyboard for the settings menu."""
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(user_id)
@@ -45,12 +43,16 @@ async def handle_settings_menu(callback: CallbackQuery):
         f"• <b>API-ключ:</b> {'✅ Установлен' if has_api_key else '❌ Не установлен'}\n\n"
         "Выберите параметр для изменения:"
     )
+    keyboard = get_settings_keyboard(cur_model, cur_style, cur_persona, has_api_key)
+    return text, keyboard
 
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_settings_keyboard(cur_model, cur_style, cur_persona, has_api_key),
-        parse_mode="HTML",
-    )
+
+@router.callback_query(F.data == "menu_settings")
+async def handle_settings_menu(callback: CallbackQuery):
+    """Renders the settings menu with user preferences."""
+    user_id = callback.from_user.id
+    text, keyboard = await render_settings_view(user_id)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
 
@@ -68,8 +70,9 @@ async def handle_settings_models(callback: CallbackQuery):
             user_repo = UserRepository(session)
             api_key = await user_repo.get_api_key(user_id, fernet)
 
-    # Use user API key if unlocked, else fallback
-    gemini_svc = GeminiService(api_key=api_key or "demo_key")
+    # Use user API key if unlocked, else fallback to default server key
+    key_to_use = api_key or settings.DEFAULT_GEMINI_KEY
+    gemini_svc = GeminiService(api_key=key_to_use)
     models = await gemini_svc.get_available_models()
 
     async with async_session_maker() as session:
@@ -170,7 +173,7 @@ async def handle_settings_api_key(callback: CallbackQuery):
         "🔑 <b>Установка Google Gemini API-ключа</b>\n\n"
         "Бот работает по модели <b>BYOK (Bring Your Own Key)</b>. "
         "Ваш ключ шифруется вашим мастер-паролем в базе данных.\n\n"
-        "Для максимальной безопасности используйте всплывающее окно (пароль маскируется точками):",
+        "Нажмите кнопку ниже, чтобы ввести ключ:",
         reply_markup=get_api_key_input_keyboard(),
         parse_mode="HTML",
     )

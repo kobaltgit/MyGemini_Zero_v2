@@ -24,6 +24,7 @@ from keyboards.inline import (
 )
 from handlers.profile import render_profile_view
 from handlers.memory import render_documents_view
+from handlers.settings import render_settings_view
 from core.config import settings
 from core.logger import get_logger
 
@@ -117,23 +118,8 @@ async def handle_settings_command(message: Message):
     """Opens Settings menu."""
     await auto_delete_user_message(message)
     user_id = message.from_user.id
-
-    async with async_session_maker() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-
-    model = user.active_model if user else "gemini-2.5-flash"
-    style = user.bot_style if user else "balanced"
-    persona = user.active_persona if user else "default"
-    has_api_key = bool(user and user.api_key)
-
-    keyboard = get_settings_keyboard(model, style, persona, has_api_key)
-    await message.answer(
-        "⚙️ <b>Параметры и настройки бота:</b>\n\n"
-        "Настройте используемую модель Google Gemini, стиль диалога, персону ассистента или укажите личный API-ключ:",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
+    text, keyboard = await render_settings_view(user_id)
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 @router.message(Command("dialogs"))
