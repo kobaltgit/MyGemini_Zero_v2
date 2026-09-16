@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Безопасный ввод - MyGemini Zero</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg-color: var(--tg-theme-bg-color, #18181b);
+      --text-color: var(--tg-theme-text-color, #fafafa);
+      --hint-color: var(--tg-theme-hint-color, #a1a1aa);
+      --button-color: var(--tg-theme-button-color, #2563eb);
+      --button-text: var(--tg-theme-button-text-color, #ffffff);
+      --secondary-bg: var(--tg-theme-secondary-bg-color, #27272a);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px 20px;
+    }
+
+    .card {
+      background: var(--secondary-bg);
+      border-radius: 20px;
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+      text-align: center;
+    }
+
+    .icon {
+      font-size: 44px;
+      margin-bottom: 16px;
+    }
+
+    h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    p.subtitle {
+      font-size: 14px;
+      color: var(--hint-color);
+      margin-bottom: 24px;
+      line-height: 1.4;
+    }
+
+    .input-wrapper {
+      position: relative;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+
+    input {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 1.5px solid rgba(255, 255, 255, 0.1);
+      background: rgba(0, 0, 0, 0.25);
+      color: var(--text-color);
+      font-size: 16px;
+      letter-spacing: 2px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      border-color: var(--button-color);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: var(--button-color);
+      color: var(--button-text);
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+      opacity: 0.9;
+    }
+
+    .toggle-visibility {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--hint-color);
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .note {
+      font-size: 12px;
+      color: var(--hint-color);
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon" id="icon">🔐</div>
+    <h2 id="title">Безопасный ввод</h2>
+    <p class="subtitle" id="subtitle">Пароль не сохраняется в истории переписки Telegram.</p>
+
+    <div class="input-wrapper">
+      <input type="password" id="secretInput" placeholder="Введите данные" autocomplete="off" autofocus>
+      <button type="button" class="toggle-visibility" id="toggleBtn" onclick="toggleVisibility()">👁</button>
+    </div>
+
+    <button class="btn" id="submitBtn" onclick="submitData()">Подтвердить</button>
+    <div class="note">🔒 Защищено сквозным Zero-Knowledge шифрованием</div>
+  </div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
+
+    // Determine mode from query params: ?mode=password or ?mode=apikey or ?mode=panic
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode') || 'password';
+
+    const titleEl = document.getElementById('title');
+    const subtitleEl = document.getElementById('subtitle');
+    const iconEl = document.getElementById('icon');
+    const inputEl = document.getElementById('secretInput');
+
+    if (mode === 'apikey') {
+      iconEl.textContent = '🔑';
+      titleEl.textContent = 'Ввод Google Gemini API Ключа';
+      subtitleEl.textContent = 'Ключ будет зашифрован вашим мастер-паролем перед сохранением в базу данных.';
+      inputEl.placeholder = 'AIzaSy...';
+    } else if (mode === 'panic') {
+      iconEl.textContent = '🚨';
+      titleEl.textContent = 'Ввод Паник-Пароля';
+      subtitleEl.textContent = 'При вводе этого пароля все данные диалогов будут немедленно стёрты.';
+      inputEl.placeholder = '••••••••';
+    } else {
+      iconEl.textContent = '🔐';
+      titleEl.textContent = 'Мастер-пароль';
+      subtitleEl.textContent = 'Введите ваш мастер-пароль для разблокировки памяти и расшифровки диалогов.';
+      inputEl.placeholder = '••••••••';
+    }
+
+    function toggleVisibility() {
+      const type = inputEl.getAttribute('type') === 'password' ? 'text' : 'password';
+      inputEl.setAttribute('type', type);
+      document.getElementById('toggleBtn').textContent = type === 'password' ? '👁' : '🔒';
+    }
+
+    function submitData() {
+      const val = inputEl.value.trim();
+      if (!val) {
+        if (tg) tg.HapticFeedback?.notificationOccurred('error');
+        inputEl.focus();
+        return;
+      }
+
+      const payload = {
+        action: mode,
+        value: val
+      };
+
+      if (tg) {
+        tg.HapticFeedback?.notificationOccurred('success');
+        tg.sendData(JSON.stringify(payload));
+        tg.close();
+      } else {
+        alert('Данные введены: ' + mode);
+      }
+    }
+
+    inputEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        submitData();
+      }
+    });
+  </script>
+</body>
+</html>

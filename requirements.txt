@@ -1,0 +1,33 @@
+# Telegram Bot Framework (Modern aiogram 3)
+aiogram>=3.17.0
+
+# Google Gemini Official Modern SDK
+google-genai>=1.0.0
+
+# Database (Async SQLAlchemy 2.0 + SQLite)
+SQLAlchemy[asyncio]>=2.0.38
+aiosqlite>=0.21.0
+
+# Configuration and Validation
+pydantic>=2.10.6
+pydantic-settings>=2.7.1
+python-dotenv>=1.0.1
+
+# Zero-Knowledge Cryptography & Security
+cryptography>=44.0.1
+bcrypt>=4.2.1
+
+# Vector Database for Long-Term Memory (RAG)
+chromadb>=0.5.23
+
+# Document Parsing (PDF, DOCX, TXT)
+pypdf>=5.3.0
+python-docx>=1.1.2
+
+# Formatting & Image Processing
+telegramify-markdown>=0.2.1
+Pillow>=11.1.0
+
+# Caching and Async Utilities
+cachetools>=5.5.2
+aiohttp>=3.11.12
