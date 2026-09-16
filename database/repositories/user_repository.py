@@ -19,6 +19,7 @@ from core.crypto import (
     decrypt_data,
 )
 from core.logger import get_logger
+from core.config import settings
 
 logger = get_logger("database")
 
@@ -224,6 +225,25 @@ class UserRepository:
         )
         await self.session.execute(stmt)
         await self.session.commit()
+
+    def is_subscription_active(self, user: Optional[User]) -> bool:
+        """
+        Determines whether a user has an active, non-expired subscription.
+        Admin is always active (lifetime).
+        Regular users are active only if subscription_status == 'active'
+        and subscription_end_date is set and >= today's date.
+        """
+        if not user:
+            return False
+        if user.user_id == settings.ADMIN_USER_ID:
+            return True
+        if user.subscription_status != "active" or not user.subscription_end_date:
+            return False
+        try:
+            end_dt = datetime.strptime(user.subscription_end_date[:10], "%Y-%m-%d")
+            return end_dt.date() >= datetime.now().date()
+        except Exception:
+            return False
 
     async def get_all_subscribers(self) -> List[User]:
         """Returns all users with active or past subscriptions for admin management."""

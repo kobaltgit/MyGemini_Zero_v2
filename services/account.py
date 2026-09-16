@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional
 from cryptography.fernet import Fernet
 
 from database.models.user import User
+from core.config import settings
 
 
 def get_user_rank(message_count: int) -> str:
@@ -32,37 +33,53 @@ def format_account_card(
     """
     Renders user profile and statistics card for 'Личный кабинет'.
     """
-    now = datetime.now()
     rank = get_user_rank(message_count)
+    now = datetime.now()
 
-    # Calculate days with bot
-    days_active = 1
+    # Days with bot
     reg_date_str = "—"
-    date_field = user.first_interaction_date
+    days_active = 1
+    date_field = user.first_interaction_date or (user.last_session_ts[:10] if user.last_session_ts else None)
     if date_field:
         try:
             reg_dt = datetime.strptime(date_field[:10], "%Y-%m-%d")
-            days_active = max(1, (now - reg_dt).days + 1)
+            days_active = max(1, (now.date() - reg_dt.date()).days + 1)
             reg_date_str = reg_dt.strftime("%d.%m.%Y")
         except Exception:
             reg_date_str = date_field[:10]
 
     # Subscription details
-    sub_status_icon = "🟢" if user.subscription_status == "active" else "⚪️"
+    is_admin = user.user_id == settings.ADMIN_USER_ID
     sub_days_left_str = ""
+    is_sub_active = is_admin
     if user.subscription_end_date:
         try:
             end_dt = datetime.strptime(user.subscription_end_date[:10], "%Y-%m-%d")
-            diff = (end_dt - now).days
+            diff = (end_dt.date() - now.date()).days
             if diff >= 0:
                 sub_days_left_str = f" (осталось {diff} дн.)"
+                if user.subscription_status == "active":
+                    is_sub_active = True
             else:
                 sub_days_left_str = " (истекла)"
+                is_sub_active = False
         except Exception:
             pass
+    elif is_admin:
+        is_sub_active = True
 
-    sub_line = f"{sub_status_icon} <b>Подписка:</b> {user.subscription_status.capitalize()}{sub_days_left_str}"
-    if user.subscription_end_date:
+    sub_status_icon = "🟢" if is_sub_active else "⚪️"
+    if is_admin:
+        status_name = "Администратор (Бессрочно)"
+    elif is_sub_active:
+        status_name = "Активна"
+    elif sub_days_left_str == " (истекла)":
+        status_name = "Истекла"
+    else:
+        status_name = user.subscription_status.capitalize()
+
+    sub_line = f"{sub_status_icon} <b>Подписка:</b> {status_name}{sub_days_left_str}"
+    if not is_admin and user.subscription_end_date:
         sub_line += f"\n   • <b>Действует до:</b> {user.subscription_end_date[:10]}"
 
     # Model and API key

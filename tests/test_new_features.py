@@ -75,33 +75,41 @@ def test_dialog_title_fallback():
 
 
 def test_subscribers_sorting_logic():
-    """Verifies that paid subscribers are sorted to top with green marker 🟢."""
-    user_paid_1 = User(user_id=1, username="paid1", first_name="Пётр", subscription_status="active", subscription_end_date="2026-10-01")
-    user_free_2 = User(user_id=2, username="free2", first_name="Иван", subscription_status="expired", subscription_end_date="2026-01-01")
-    user_paid_3 = User(user_id=3, username="paid3", first_name="Ольга", subscription_status="active", subscription_end_date="2026-11-01")
+    """Verifies that paid active subscribers are sorted to top with green marker 🟢, while expired ones get ⚪."""
+    from database.repositories.user_repository import UserRepository
+    user_repo = UserRepository(None)
 
-    subscribers = [user_free_2, user_paid_1, user_paid_3]
-    user_payments_map = {1: [object()], 2: [], 3: [object()]}
+    user_paid_future = User(user_id=1, username="paid1", first_name="Пётр", subscription_status="active", subscription_end_date="2026-10-01")
+    user_expired = User(user_id=2, username="free2", first_name="Иван", subscription_status="active", subscription_end_date="2025-01-01")
+    user_paid_long = User(user_id=3, username="paid3", first_name="Ольга", subscription_status="active", subscription_end_date="2026-11-01")
+
+    assert user_repo.is_subscription_active(user_paid_future) is True
+    assert user_repo.is_subscription_active(user_expired) is False
+    assert user_repo.is_subscription_active(user_paid_long) is True
+
+    subscribers = [user_expired, user_paid_future, user_paid_long]
+    user_payments_map = {1: [object()], 2: [object()], 3: [object()]}
 
     def subscriber_sort_key(s):
         payments = user_payments_map.get(s.user_id, [])
         total_paid = len(payments)
-        is_active = 1 if s.subscription_status == "active" else 0
-        has_paid = 1 if (is_active or total_paid > 0) else 0
+        is_active = 1 if user_repo.is_subscription_active(s) else 0
         end_d = s.subscription_end_date or ""
-        return (has_paid, is_active, end_d)
+        return (is_active, end_d, total_paid)
 
     sorted_subs = sorted(subscribers, key=subscriber_sort_key, reverse=True)
 
-    # Top users must be the paid active ones
+    # Top users must be the unexpired active ones
     assert sorted_subs[0].user_id == 3  # end date November
     assert sorted_subs[1].user_id == 1  # end date October
-    assert sorted_subs[2].user_id == 2  # expired free user
+    assert sorted_subs[2].user_id == 2  # expired user
 
     # Markers check
-    marker_top = "🟢" if sorted_subs[0].subscription_status == "active" else "⚪"
-    marker_last = "🟢" if sorted_subs[2].subscription_status == "active" else "⚪"
+    marker_top = "🟢" if user_repo.is_subscription_active(sorted_subs[0]) else "⚪"
+    marker_mid = "🟢" if user_repo.is_subscription_active(sorted_subs[1]) else "⚪"
+    marker_last = "🟢" if user_repo.is_subscription_active(sorted_subs[2]) else "⚪"
     assert marker_top == "🟢"
+    assert marker_mid == "🟢"
     assert marker_last == "⚪"
 
 

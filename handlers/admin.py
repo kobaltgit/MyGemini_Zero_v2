@@ -80,7 +80,7 @@ async def handle_admin_stats(callback: CallbackQuery):
         payment_stats = await pay_repo.get_payment_stats()
 
     total_users = len(all_users)
-    active_subs = len([s for s in subscribers if s.subscription_status == "active"])
+    active_subs = len([s for s in subscribers if user_repo.is_subscription_active(s)])
     total_rev_rub = payment_stats["total_revenue"] // 100
 
     text = (
@@ -101,6 +101,7 @@ async def handle_admin_subscribers_list(callback: CallbackQuery):
     """
     Fulfills requirement #5:
     Displays subscribers with full details: Name, ID, dates, renewal count, days left.
+    Active subscribers appear at the top with a green marker.
     """
     if not admin_only(callback.from_user.id):
         return
@@ -127,14 +128,13 @@ async def handle_admin_subscribers_list(callback: CallbackQuery):
 
     now = datetime.now()
 
-    # Sort subscribers: paid / active first, then by subscription end date
+    # Sort subscribers: active subscribers strictly first at the top, then by end date, then payments
     def subscriber_sort_key(s):
         payments = user_payments_map.get(s.user_id, [])
         total_paid = sum(p.amount for p in payments)
-        is_active = 1 if s.subscription_status == "active" else 0
-        has_paid = 1 if (is_active or total_paid > 0) else 0
+        is_active = 1 if user_repo.is_subscription_active(s) else 0
         end_d = s.subscription_end_date or ""
-        return (has_paid, is_active, end_d)
+        return (is_active, end_d, total_paid)
 
     sorted_subscribers = sorted(subscribers, key=subscriber_sort_key, reverse=True)
 
@@ -146,26 +146,37 @@ async def handle_admin_subscribers_list(callback: CallbackQuery):
         payments = user_payments_map.get(sub.user_id, [])
         renewals_count = len(payments)
         total_paid_rub = sum(p.amount for p in payments) // 100
-        is_active = sub.subscription_status == "active"
-        is_paid = is_active or (total_paid_rub > 0)
+        is_active = user_repo.is_subscription_active(sub)
 
-        # Green marker for paid subscribers, neutral for others
-        marker = "🟢" if is_paid else "⚪"
+        # Green marker for currently active subscribers, neutral for expired / unpaid
+        marker = "🟢" if is_active else "⚪"
 
-        # Calculate days left
+        # Calculate days left and status text
         days_left_str = "—"
         if sub.subscription_end_date:
             try:
                 end_dt = datetime.strptime(sub.subscription_end_date[:10], "%Y-%m-%d")
-                days_left = (end_dt - now).days
-                days_left_str = f"{days_left} дн." if days_left >= 0 else "истекла"
+                days_left = (end_dt.date() - now.date()).days
+                if days_left >= 0:
+                    days_left_str = f"{days_left} дн."
+                else:
+                    days_left_str = "истекла"
             except Exception:
                 days_left_str = "—"
+
+        if sub.user_id == settings.ADMIN_USER_ID:
+            status_label = "👑 Администратор"
+        elif is_active:
+            status_label = "🟢 Активна"
+        elif days_left_str == "истекла":
+            status_label = "🔴 Истекла"
+        else:
+            status_label = sub.subscription_status
 
         lines.append(
             f"{marker} <b>{i}. {full_name}</b> ({uname})\n"
             f"   • <b>ID:</b> <code>{sub.user_id}</code>\n"
-            f"   • <b>Статус:</b> {sub.subscription_status}\n"
+            f"   • <b>Статус:</b> {status_label}\n"
             f"   • <b>Действует до:</b> {sub.subscription_end_date or '—'} ({days_left_str})\n"
             f"   • <b>Оплат / Продлений:</b> {renewals_count} раз(а)\n"
             f"   • <b>Всего внесено:</b> {total_paid_rub} ₽\n"

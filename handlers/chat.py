@@ -72,7 +72,7 @@ async def handle_user_message(message: Message, bot: Bot):
 
         # Check subscription
         is_admin = user_id == settings.ADMIN_USER_ID
-        if not is_admin and user.subscription_status != "active":
+        if not is_admin and not user_repo.is_subscription_active(user):
             await message.answer(
                 "💎 <b>Для доступа к боту требуется активная подписка.</b>\n\n"
                 "Оформите подписку для безлимитного общения, RAG-памяти и анализа документов:",

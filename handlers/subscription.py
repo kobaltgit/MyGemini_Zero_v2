@@ -31,10 +31,21 @@ async def handle_subscription_menu(callback: CallbackQuery):
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(user_id)
+        is_active = user_repo.is_subscription_active(user)
 
     is_admin = user_id == settings.ADMIN_USER_ID
-    status = "👑 Администратор (Бессрочно)" if is_admin else (user.subscription_status if user else "none")
-    end_date = "Бессрочно" if is_admin else (user.subscription_end_date if user and user.subscription_end_date else "—")
+    if is_admin:
+        status = "👑 Администратор (Бессрочно)"
+        end_date = "Бессрочно"
+    elif is_active:
+        status = "🟢 Активна"
+        end_date = user.subscription_end_date[:10] if (user and user.subscription_end_date) else "—"
+    elif user and user.subscription_end_date:
+        status = "🔴 Истекла"
+        end_date = f"{user.subscription_end_date[:10]} (истекла)"
+    else:
+        status = "⚪️ Не оформлена"
+        end_date = "—"
 
     text = (
         "💎 <b>Управление подпиской MyGemini Zero</b>\n\n"
