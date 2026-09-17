@@ -38,6 +38,7 @@
 | `FIX-BUG-019` | 2026-09-16 | Chat / Media | Добавлен перехват открытых API-ключей Google и защита от гонок сообщений | kobaltgit |
 | `FIX-BUG-020` | 2026-09-17 | Handlers / Routing | Исправлен синтаксис Command: объединены кортежи аргументов Command("a", "b") вместо двух фильтров | kobaltgit |
 | `FIX-BUG-021` | 2026-09-17 | UI / Mobile | Отложенный delete, is_persistent=False для сворачивания клавиатуры, safe_send_menu и fallback plain text | kobaltgit |
+| `FIX-BUG-022` | 2026-09-17 | UI / WebApp | Восстановлено WebApp-окно ввода мастер-пароля через ReplyKeyboard, добавлено подтверждение при регистрации | kobaltgit |
 
 ---
 
@@ -184,6 +185,25 @@
   4. В `core/ui_helpers.py` внедрён fallback на plain text при ошибках `can't parse entities`, а в `handlers/auth.py` исправлены разметки на `HTML`.
 * **Верификация (Тестирование):**
   - Обновлён тест `test_reply_keyboard_structure` в `tests/test_new_features.py`.
+
+### [FIX-BUG-022] Исправление: Восстановление защищенного WebApp-окна для паролей и подтверждение при регистрации
+* **Дата закрытия:** 2026-09-17
+* **Затронутые файлы:** `webapp/index.html`, `docs/index.html`, `keyboards/reply.py`, `handlers/auth.py`, `handlers/start.py`, `handlers/chat.py`, `.github/workflows/deploy-pages.yml`, `tests/test_fixes_and_i18n.py`
+* **Первопричина (RCA):**
+  1. В Telegram Bot API нативный метод `Telegram.WebApp.sendData(data)` заблокирован при вызове из инлайн-кнопок сообщений (`InlineKeyboardButton`). Он поддерживается только из кнопок обычной клавиатуры (`KeyboardButton`). Ранее попытка вызывать WebApp из инлайн-кнопок привела к их удалению.
+  2. В веб-форме `webapp/index.html` отсутствовало второе поле подтверждения пароля, что создавало риск опечатки новичком при регистрации.
+  3. В `handlers/auth.py` отсутствовал обработчик входящих данных Telegram Mini App `@router.message(F.web_app_data)`.
+* **Применённое решение:**
+  1. В `webapp/index.html` и `docs/index.html` реализован режим первичной регистрации `?mode=setup` с двумя полями ввода («Придумайте пароль» и «Повторите пароль»), валидацией совпадения и блокировкой кнопки до совпадения.
+  2. Для разблокировки `?mode=unlock` сохранено одно поле с точками `••••••` и переключателем-глазком `👁`.
+  3. В `keyboards/reply.py` добавлены кнопки `KeyboardButton(web_app=WebAppInfo(...))` в `get_locked_reply_keyboard` и `get_setup_reply_keyboard`.
+  4. При блокировке сейфа нижняя панель схлопывается до `[ 🔐 Ввести пароль в окне ]`, а после ввода моментально разворачивается полное рабочее меню.
+  5. В `handlers/auth.py` восстановлен обработчик `F.web_app_data` для регистрации и разблокировки.
+  6. В `.github/workflows/deploy-pages.yml` расширены пути триггеров.
+* **Верификация (Тестирование):**
+  - Добавлены тесты `test_locked_reply_keyboard` и `test_setup_reply_keyboard` в `tests/test_fixes_and_i18n.py`.
+  - Все 26 unit-тестов успешно пройдены (`Ran 26 tests in 0.318s OK`).
+  - Проверена живая разблокировка в Telegram на сервере.
 
 ### Шаблон карточки исправления:
 

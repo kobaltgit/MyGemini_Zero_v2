@@ -25,7 +25,7 @@ from keyboards.inline import (
     get_cancel_keyboard,
     get_close_button,
 )
-from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
+from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from core.ui_helpers import safe_edit_message_text, safe_answer_callback
 from core.localization import get_text
 from core.config import settings
@@ -51,6 +51,167 @@ async def safe_instant_delete(message: Message):
         await message.delete()
     except Exception:
         pass
+
+
+@router.message(F.web_app_data)
+async def handle_webapp_data(message: Message, state: FSMContext):
+    """
+    Receives data securely submitted from the Telegram WebApp modal popup.
+    Input in the popup is masked with dots (••••••) and never appears in chat history.
+    """
+    user_id = message.from_user.id
+    raw_data = message.web_app_data.data if message.web_app_data else "{}"
+
+    # Instantly delete the service message
+    await safe_instant_delete(message)
+    await state.clear()
+
+    try:
+        payload = json.loads(raw_data)
+    except Exception as e:
+        logger.error(f"Invalid JSON from WebApp: {e}")
+        await message.answer("❌ Ошибка обработки данных из веб-окна.")
+        return
+
+    action = (payload.get("action") or "").strip().lower()
+    value = (payload.get("value") or "").strip()
+
+    if not value:
+        await message.answer("⚠️ Введено пустое значение.")
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        conv_repo = ConversationRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        is_admin = (user_id == settings.ADMIN_USER_ID)
+        has_password = await user_repo.is_master_password_set(user_id)
+
+        # 1. Action: Setup (Initial Master Password)
+        if action in ("setup", "register") or (action == "password" and not has_password):
+            if len(value) < 4:
+                err_msg = (
+                    "⚠️ Пароль слишком короткий (минимум 4 символа)."
+                    if lang_code == "ru"
+                    else "⚠️ Password too short (minimum 4 characters)."
+                )
+                await message.answer(err_msg, reply_markup=get_setup_reply_keyboard(lang_code))
+                return
+
+            await user_repo.set_master_password(user_id, value)
+            salt = await user_repo.get_salt(user_id)
+            fernet = get_fernet_instance(value, salt)
+            session_manager.unlock_session(user_id, fernet)
+
+            success_text = (
+                "✅ <b>Мастер-пароль успешно установлен!</b>\n\n"
+                "Ваше зашифрованное хранилище активировано и разблокировано. "
+                "Теперь все сообщения и ключи шифруются на лету симметричным шифром Fernet.\n\n"
+                "Задайте любой вопрос или отправьте файл для начала работы!"
+                if lang_code == "ru"
+                else "✅ <b>Master password set successfully!</b>\n\n"
+                "Your encrypted vault is activated and unlocked. "
+                "All messages and keys are encrypted on-the-fly using Fernet cipher.\n\n"
+                "Ask any question or send a file to get started!"
+            )
+            await message.answer(
+                success_text,
+                reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+                parse_mode="HTML",
+            )
+            return
+
+        # 2. Action: Unlock
+        if action in ("unlock", "password"):
+            # Check panic password first
+            if await user_repo.verify_panic_password(user_id, value):
+                await conv_repo.clear_user_data(user_id)
+                session_manager.lock_session(user_id)
+                panic_text = (
+                    "🚨 <b>Аварийный сброс выполнен.</b>\n"
+                    "Все диалоги, сообщения, профиль и ключи были безвозвратно удалены из базы данных."
+                    if lang_code == "ru"
+                    else "🚨 <b>Emergency wipe executed.</b>\n"
+                    "All dialogues, messages, profile, and keys have been permanently wiped."
+                )
+                await message.answer(panic_text, reply_markup=get_locked_reply_keyboard(lang_code), parse_mode="HTML")
+                return
+
+            if await user_repo.verify_master_password(user_id, value):
+                salt = await user_repo.get_salt(user_id)
+                fernet = get_fernet_instance(value, salt)
+                session_manager.unlock_session(user_id, fernet)
+
+                unlock_text = (
+                    "🔓 <b>Сейф успешно разблокирован!</b>\n\n"
+                    "Ключи расшифровки загружены в память. Диалоги готовы к продолжению."
+                    if lang_code == "ru"
+                    else "🔓 <b>Vault unlocked successfully!</b>\n\n"
+                    "Decryption keys loaded into memory. Dialogues are ready."
+                )
+                await message.answer(
+                    unlock_text,
+                    reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+                    parse_mode="HTML",
+                )
+            else:
+                wrong_text = (
+                    "❌ <b>Неверный мастер-пароль.</b> Попробуйте ещё раз:"
+                    if lang_code == "ru"
+                    else "❌ <b>Incorrect master password.</b> Please try again:"
+                )
+                await message.answer(
+                    wrong_text,
+                    reply_markup=get_locked_reply_keyboard(lang_code),
+                    parse_mode="HTML",
+                )
+            return
+
+        # 3. Action: API Key
+        if action == "apikey":
+            fernet = session_manager.get_fernet(user_id)
+            if not fernet:
+                locked_prompt = (
+                    "🔒 Сейф заблокирован. Разблокируйте его для сохранения ключа."
+                    if lang_code == "ru"
+                    else "🔒 Vault is locked. Unlock it to save your key."
+                )
+                await message.answer(locked_prompt, reply_markup=get_locked_reply_keyboard(lang_code))
+                return
+
+            await user_repo.set_api_key(user_id, value, fernet)
+            done_key = (
+                "🔑 <b>API-ключ Google Gemini успешно сохранён!</b>\n\n"
+                "Ключ зашифрован вашим мастер-паролем (Zero-Knowledge) и надёжно сохранён."
+                if lang_code == "ru"
+                else "🔑 <b>Google Gemini API key saved!</b>\n\n"
+                "Key is encrypted with your master password (Zero-Knowledge) and securely saved."
+            )
+            await message.answer(
+                done_key,
+                reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+                parse_mode="HTML",
+            )
+            return
+
+        # 4. Action: Panic Password Setup
+        if action == "panic":
+            await user_repo.set_panic_password(user_id, value)
+            done_panic = (
+                "🚨 <b>Паник-пароль успешно установлен!</b>\n\n"
+                "Если в окне ввода мастер-пароля ввести этот паник-пароль, бот моментально и безвозвратно сотрёт "
+                "всю историю сообщений, файлы памяти и ключи."
+                if lang_code == "ru"
+                else "🚨 <b>Panic password set successfully!</b>\n\n"
+                "If entered during unlock, the bot will immediately and permanently erase all chat history and keys."
+            )
+            await message.answer(
+                done_panic,
+                reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+                parse_mode="HTML",
+            )
+            return
 
 
 @router.callback_query(F.data == "vault_lock")
@@ -176,6 +337,13 @@ async def process_chat_password_unlock(message: Message, state: FSMContext):
                 reply_markup=get_unlock_keyboard(lang_code),
                 parse_mode="HTML",
             )
+            try:
+                await message.answer(
+                    "🔐 Введите мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Enter master password in window or chat:",
+                    reply_markup=get_locked_reply_keyboard(lang_code),
+                )
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data == "vault_setup_chat")
@@ -304,6 +472,13 @@ async def process_chat_password_confirm(message: Message, state: FSMContext):
         reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=(user_id == settings.ADMIN_USER_ID), lang_code=lang_code),
         parse_mode="HTML",
     )
+    try:
+        await message.answer(
+            "⌨️ Главное меню:" if lang_code == "ru" else "⌨️ Main Menu:",
+            reply_markup=get_main_reply_keyboard(is_admin=(user_id == settings.ADMIN_USER_ID), lang_code=lang_code),
+        )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "panic_setup_start")

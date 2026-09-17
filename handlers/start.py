@@ -17,7 +17,7 @@ from keyboards.inline import (
     get_set_password_keyboard,
     get_unlock_keyboard,
 )
-from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
+from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from middlewares.auth import session_manager
 from core.ui_helpers import safe_edit_message_text, safe_answer_callback
 from core.localization import get_text
@@ -81,6 +81,13 @@ async def handle_start(message: Message, state: FSMContext):
             reply_markup=get_set_password_keyboard(lang_code),
             parse_mode="HTML",
         )
+        try:
+            await message.answer(
+                "🔐 Задайте мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Set master password in window or chat:",
+                reply_markup=get_setup_reply_keyboard(lang_code),
+            )
+        except Exception:
+            pass
         return
 
     # 2. Existing user check session state
@@ -106,6 +113,13 @@ async def handle_start(message: Message, state: FSMContext):
             reply_markup=get_unlock_keyboard(lang_code),
             parse_mode="HTML",
         )
+        try:
+            await message.answer(
+                "🔐 Введите мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Enter master password in window or chat:",
+                reply_markup=get_locked_reply_keyboard(lang_code),
+            )
+        except Exception:
+            pass
         return
 
     # 3. Session is unlocked: show main menu
@@ -125,6 +139,13 @@ async def handle_start(message: Message, state: FSMContext):
         reply_markup=get_main_menu_keyboard(is_unlocked=True, is_admin=is_admin, lang_code=lang_code),
         parse_mode="HTML",
     )
+    try:
+        await message.answer(
+            "⌨️ Главное меню:" if lang_code == "ru" else "⌨️ Main Menu:",
+            reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+        )
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "back_to_main")

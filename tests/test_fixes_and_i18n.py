@@ -20,7 +20,7 @@ from keyboards.inline import (
     get_cancel_keyboard,
     get_close_button,
 )
-from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
+from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from services.error_parser import get_user_friendly_error_key
 from services.guide_manager import load_guides, get_full_guide, get_guide_section
 from services.calendar_helper import create_calendar_keyboard
@@ -126,6 +126,35 @@ class TestKeyboardsBilingual(unittest.TestCase):
 
         self.assertIn("🗂️ Диалоги", ru_texts)
         self.assertIn("🗂️ Dialogs", en_texts)
+
+    def test_locked_reply_keyboard(self):
+        r_ru = get_locked_reply_keyboard(lang_code="ru")
+        r_en = get_locked_reply_keyboard(lang_code="en")
+
+        ru_texts = [btn.text for row in r_ru.keyboard for btn in row]
+        en_texts = [btn.text for row in r_en.keyboard for btn in row]
+
+        self.assertIn("⌨️ Ввести в чате", ru_texts)
+        self.assertIn("⌨️ Enter in chat", en_texts)
+
+        webapp_btns = [btn for row in r_ru.keyboard for btn in row if btn.web_app]
+        self.assertTrue(len(webapp_btns) > 0)
+        self.assertIn("mode=unlock", webapp_btns[0].web_app.url)
+
+    def test_setup_reply_keyboard(self):
+        r_ru = get_setup_reply_keyboard(lang_code="ru")
+        r_en = get_setup_reply_keyboard(lang_code="en")
+
+        ru_texts = [btn.text for row in r_ru.keyboard for btn in row]
+        en_texts = [btn.text for row in r_en.keyboard for btn in row]
+
+        self.assertIn("⌨️ Ввести в чате", ru_texts)
+        self.assertIn("⌨️ Enter in chat", en_texts)
+
+        webapp_btns = [btn for row in r_ru.keyboard for btn in row if btn.web_app]
+        self.assertTrue(len(webapp_btns) > 0)
+        self.assertIn("mode=setup", webapp_btns[0].web_app.url)
+
 
 
 class TestServices(unittest.TestCase):

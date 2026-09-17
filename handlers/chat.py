@@ -22,11 +22,13 @@ from services.error_parser import get_user_friendly_error_key
 from middlewares.auth import session_manager
 from keyboards.inline import (
     get_unlock_keyboard,
+    get_set_password_keyboard,
     get_api_key_input_keyboard,
     get_subscription_keyboard,
     get_main_menu_keyboard,
     get_close_button,
 )
+from keyboards.reply import get_locked_reply_keyboard, get_setup_reply_keyboard
 from core.config import settings, BOT_STYLES, BOT_PERSONAS, SUBSCRIPTION_PLANS
 from core.localization import get_text
 from core.logger import get_logger
@@ -107,6 +109,32 @@ async def handle_user_message(message: Message, bot: Bot):
     # 1. Zero-Knowledge session check
     fernet = session_manager.get_fernet(user_id)
     if not fernet:
+        async with async_session_maker() as session:
+            user_repo = UserRepository(session)
+            has_password = await user_repo.is_master_password_set(user_id)
+
+        if not has_password:
+            prompt = (
+                "🔐 <b>Установите мастер-пароль.</b>\n\n"
+                "Для создания зашифрованного хранилища и общения с AI задайте ваш мастер-пароль:"
+                if lang_code == "ru"
+                else "🔐 <b>Set master password.</b>\n\n"
+                "To initialize your encrypted vault and chat with AI, set your master password:"
+            )
+            await message.answer(
+                prompt,
+                reply_markup=get_set_password_keyboard(lang_code),
+                parse_mode="HTML",
+            )
+            try:
+                await message.answer(
+                    "🔐 Задайте мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Set master password in window or chat:",
+                    reply_markup=get_setup_reply_keyboard(lang_code),
+                )
+            except Exception:
+                pass
+            return
+
         prompt = (
             "🔒 <b>Хранилище заблокировано.</b>\n\n"
             "Для общения с AI и расшифровки истории введите ваш мастер-пароль:"
@@ -119,6 +147,13 @@ async def handle_user_message(message: Message, bot: Bot):
             reply_markup=get_unlock_keyboard(lang_code),
             parse_mode="HTML",
         )
+        try:
+            await message.answer(
+                "🔐 Введите мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Enter master password in window or chat:",
+                reply_markup=get_locked_reply_keyboard(lang_code),
+            )
+        except Exception:
+            pass
         return
 
     # 2. Database checks: user, active dialog, API key, subscription

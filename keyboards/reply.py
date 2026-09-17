@@ -71,19 +71,32 @@ def get_main_reply_keyboard(is_admin: bool = False, lang_code: str = "ru") -> Re
 def get_locked_reply_keyboard(lang_code: str = "ru") -> ReplyKeyboardMarkup:
     """
     Builds Reply keyboard shown when vault is locked.
+    Prominently displays WebApp modal button when WEBAPP_URL is configured.
     """
     if lang_code == "ru":
-        btn_chat_pwd = "⌨️ Ввести пароль в чате"
+        btn_webapp = "🔐 Ввести пароль в окне"
+        btn_chat_pwd = "⌨️ Ввести в чате"
         btn_help = "❓ Помощь"
-        placeholder = "Сейф заблокирован. Введите мастер-пароль..."
+        placeholder = "Сейф заблокирован. Разблокируйте память..."
     else:
-        btn_chat_pwd = "⌨️ Enter password in chat"
+        btn_webapp = "🔐 Enter password in window"
+        btn_chat_pwd = "⌨️ Enter in chat"
         btn_help = "❓ Help"
-        placeholder = "Vault is locked. Enter master password..."
+        placeholder = "Vault is locked. Unlock memory..."
 
     buttons = []
-    buttons.append([KeyboardButton(text=btn_chat_pwd)])
-    buttons.append([KeyboardButton(text=btn_help)])
+    if settings.WEBAPP_URL:
+        buttons.append([
+            KeyboardButton(
+                text=btn_webapp,
+                web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}?mode=unlock&lang={lang_code}"),
+            )
+        ])
+
+    buttons.append([
+        KeyboardButton(text=btn_chat_pwd),
+        KeyboardButton(text=btn_help),
+    ])
 
     return ReplyKeyboardMarkup(
         keyboard=buttons,
@@ -91,3 +104,42 @@ def get_locked_reply_keyboard(lang_code: str = "ru") -> ReplyKeyboardMarkup:
         is_persistent=False,
         input_field_placeholder=placeholder,
     )
+
+
+def get_setup_reply_keyboard(lang_code: str = "ru") -> ReplyKeyboardMarkup:
+    """
+    Builds Reply keyboard shown to new users during initial master password onboarding.
+    Prominently displays WebApp modal setup button with password confirmation fields.
+    """
+    if lang_code == "ru":
+        btn_webapp = "🔐 Установить пароль в окне"
+        btn_chat_pwd = "⌨️ Ввести в чате"
+        btn_help = "❓ Помощь"
+        placeholder = "Установите мастер-пароль для шифрования..."
+    else:
+        btn_webapp = "🔐 Set password in window"
+        btn_chat_pwd = "⌨️ Enter in chat"
+        btn_help = "❓ Help"
+        placeholder = "Set master password to encrypt..."
+
+    buttons = []
+    if settings.WEBAPP_URL:
+        buttons.append([
+            KeyboardButton(
+                text=btn_webapp,
+                web_app=WebAppInfo(url=f"{settings.WEBAPP_URL}?mode=setup&lang={lang_code}"),
+            )
+        ])
+
+    buttons.append([
+        KeyboardButton(text=btn_chat_pwd),
+        KeyboardButton(text=btn_help),
+    ])
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True,
+        is_persistent=False,
+        input_field_placeholder=placeholder,
+    )
+

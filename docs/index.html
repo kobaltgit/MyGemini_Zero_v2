@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Безопасный ввод - MyGemini Zero</title>
+  <title>Безопасный ввод - MyGemini Zero v2</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -57,49 +57,31 @@
     p.subtitle {
       font-size: 14px;
       color: var(--hint-color);
-      margin-bottom: 24px;
+      margin-bottom: 20px;
       line-height: 1.4;
     }
 
     .input-wrapper {
       position: relative;
       width: 100%;
-      margin-bottom: 20px;
+      margin-bottom: 14px;
     }
 
     input {
       width: 100%;
-      padding: 14px 16px;
+      padding: 14px 44px 14px 16px;
       border-radius: 12px;
-      border: 1.5px solid rgba(255, 255, 255, 0.1);
+      border: 1.5px solid rgba(255, 255, 255, 0.12);
       background: rgba(0, 0, 0, 0.25);
       color: var(--text-color);
       font-size: 16px;
-      letter-spacing: 2px;
       outline: none;
-      transition: border-color 0.2s;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
 
     input:focus {
       border-color: var(--button-color);
-    }
-
-    .btn {
-      width: 100%;
-      padding: 14px;
-      border-radius: 12px;
-      border: none;
-      background: var(--button-color);
-      color: var(--button-text);
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.2s, transform 0.1s;
-    }
-
-    .btn:active {
-      transform: scale(0.98);
-      opacity: 0.9;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
     }
 
     .toggle-visibility {
@@ -112,12 +94,62 @@
       color: var(--hint-color);
       cursor: pointer;
       font-size: 18px;
+      line-height: 1;
+      padding: 4px;
+    }
+
+    .status-hint {
+      font-size: 13px;
+      min-height: 18px;
+      margin-bottom: 16px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .status-hint.error {
+      color: #ef4444;
+    }
+
+    .status-hint.success {
+      color: #22c55e;
+    }
+
+    .status-hint.warn {
+      color: #f59e0b;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: var(--button-color);
+      color: var(--button-text);
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s, background-color 0.2s;
+    }
+
+    .btn:active:not(:disabled) {
+      transform: scale(0.98);
+      opacity: 0.9;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      filter: grayscale(0.5);
     }
 
     .note {
       font-size: 12px;
       color: var(--hint-color);
       margin-top: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
   </style>
 </head>
@@ -125,15 +157,25 @@
   <div class="card">
     <div class="icon" id="icon">🔐</div>
     <h2 id="title">Безопасный ввод</h2>
-    <p class="subtitle" id="subtitle">Пароль не сохраняется в истории переписки Telegram.</p>
+    <p class="subtitle" id="subtitle">Пароль защищён сквозным шифрованием.</p>
 
     <div class="input-wrapper">
-      <input type="password" id="secretInput" placeholder="Введите данные" autocomplete="off" autofocus>
-      <button type="button" class="toggle-visibility" id="toggleBtn" onclick="toggleVisibility()">👁</button>
+      <input type="password" id="secretInput" placeholder="Введите пароль" autocomplete="off" autofocus>
+      <button type="button" class="toggle-visibility" id="toggleBtn1" onclick="toggleVisibility('secretInput', 'toggleBtn1')">👁</button>
     </div>
 
+    <div class="input-wrapper" id="confirmWrapper" style="display: none;">
+      <input type="password" id="confirmInput" placeholder="Повторите пароль" autocomplete="off">
+      <button type="button" class="toggle-visibility" id="toggleBtn2" onclick="toggleVisibility('confirmInput', 'toggleBtn2')">👁</button>
+    </div>
+
+    <div class="status-hint" id="statusHint"></div>
+
     <button class="btn" id="submitBtn" onclick="submitData()">Подтвердить</button>
-    <div class="note">🔒 Защищено сквозным Zero-Knowledge шифрованием</div>
+    <div class="note">
+      <span>🔒</span>
+      <span id="noteText">Защищено сквозным Zero-Knowledge шифрованием</span>
+    </div>
   </div>
 
   <script>
@@ -143,65 +185,176 @@
       tg.expand();
     }
 
-    // Determine mode from query params: ?mode=password or ?mode=apikey or ?mode=panic
     const params = new URLSearchParams(window.location.search);
-    const mode = params.get('mode') || 'password';
+    const mode = (params.get('mode') || 'unlock').toLowerCase();
+    const isEn = (params.get('lang') === 'en') || (tg?.initDataUnsafe?.user?.language_code === 'en');
 
     const titleEl = document.getElementById('title');
     const subtitleEl = document.getElementById('subtitle');
     const iconEl = document.getElementById('icon');
     const inputEl = document.getElementById('secretInput');
+    const confirmWrapper = document.getElementById('confirmWrapper');
+    const confirmInput = document.getElementById('confirmInput');
+    const statusHint = document.getElementById('statusHint');
+    const submitBtn = document.getElementById('submitBtn');
+    const noteText = document.getElementById('noteText');
 
-    if (mode === 'apikey') {
-      iconEl.textContent = '🔑';
-      titleEl.textContent = 'Ввод Google Gemini API Ключа';
-      subtitleEl.textContent = 'Ключ будет зашифрован вашим мастер-паролем перед сохранением в базу данных.';
-      inputEl.placeholder = 'AIzaSy...';
+    const isSetupMode = (mode === 'setup' || mode === 'register' || mode === 'panic');
+    const requiresConfirmation = isSetupMode;
+
+    if (mode === 'setup' || mode === 'register') {
+      iconEl.textContent = '🔐';
+      titleEl.textContent = isEn ? 'Create Master Password' : 'Установка мастер-пароля';
+      subtitleEl.textContent = isEn
+        ? 'Create a strong master password (min 4 characters). Recovery without password is impossible!'
+        : 'Придумайте надёжный мастер-пароль (от 4 символов). Восстановить доступ при утере невозможно!';
+      inputEl.placeholder = isEn ? 'New master password' : 'Придумайте мастер-пароль';
+      confirmInput.placeholder = isEn ? 'Confirm master password' : 'Повторите мастер-пароль';
+      confirmWrapper.style.display = 'block';
+      submitBtn.textContent = isEn ? 'Set Password' : 'Установить пароль';
     } else if (mode === 'panic') {
       iconEl.textContent = '🚨';
-      titleEl.textContent = 'Ввод Паник-Пароля';
-      subtitleEl.textContent = 'При вводе этого пароля все данные диалогов будут немедленно стёрты.';
-      inputEl.placeholder = '••••••••';
+      titleEl.textContent = isEn ? 'Setup Panic Password' : 'Установка Паник-Пароля';
+      subtitleEl.textContent = isEn
+        ? 'Entering this password at unlock will permanently wipe all chat history and keys.'
+        : 'При вводе этого пароля в окне разблокировки все диалоги и ключи будут моментально стёрты.';
+      inputEl.placeholder = isEn ? 'Panic password' : 'Паник-пароль';
+      confirmInput.placeholder = isEn ? 'Confirm panic password' : 'Повторите паник-пароль';
+      confirmWrapper.style.display = 'block';
+      submitBtn.textContent = isEn ? 'Set Panic Password' : 'Установить паник-пароль';
+    } else if (mode === 'apikey') {
+      iconEl.textContent = '🔑';
+      titleEl.textContent = isEn ? 'Google Gemini API Key' : 'Ввод API-ключа Gemini';
+      subtitleEl.textContent = isEn
+        ? 'Key is encrypted with your master password before storing.'
+        : 'Ключ будет зашифрован вашим мастер-паролем перед сохранением.';
+      inputEl.placeholder = 'AIzaSy...';
+      inputEl.type = 'text';
+      document.getElementById('toggleBtn1').style.display = 'none';
+      submitBtn.textContent = isEn ? 'Save API Key' : 'Сохранить ключ';
     } else {
+      // unlock / password default
       iconEl.textContent = '🔐';
-      titleEl.textContent = 'Мастер-пароль';
-      subtitleEl.textContent = 'Введите ваш мастер-пароль для разблокировки памяти и расшифровки диалогов.';
-      inputEl.placeholder = '••••••••';
+      titleEl.textContent = isEn ? 'Unlock Vault' : 'Разблокировка сейфа';
+      subtitleEl.textContent = isEn
+        ? 'Enter your master password to decrypt dialogues and continue chatting.'
+        : 'Введите ваш мастер-пароль для расшифровки диалогов и продолжения общения.';
+      inputEl.placeholder = isEn ? 'Master password' : 'Мастер-пароль';
+      submitBtn.textContent = isEn ? 'Unlock' : 'Разблокировать';
     }
 
-    function toggleVisibility() {
-      const type = inputEl.getAttribute('type') === 'password' ? 'text' : 'password';
-      inputEl.setAttribute('type', type);
-      document.getElementById('toggleBtn').textContent = type === 'password' ? '👁' : '🔒';
+    if (isEn && noteText) {
+      noteText.textContent = 'Protected by Zero-Knowledge client encryption';
     }
+
+    function toggleVisibility(inputId, btnId) {
+      const field = document.getElementById(inputId);
+      const btn = document.getElementById(btnId);
+      if (!field || !btn) return;
+      const isPwd = (field.getAttribute('type') === 'password');
+      field.setAttribute('type', isPwd ? 'text' : 'password');
+      btn.textContent = isPwd ? '🔒' : '👁';
+    }
+
+    function validate() {
+      const val1 = inputEl.value;
+      const val2 = confirmInput.value;
+
+      if (!requiresConfirmation) {
+        statusHint.textContent = '';
+        statusHint.className = 'status-hint';
+        submitBtn.disabled = val1.trim().length === 0;
+        return val1.trim().length > 0;
+      }
+
+      if (val1.length === 0 && val2.length === 0) {
+        statusHint.textContent = '';
+        statusHint.className = 'status-hint';
+        submitBtn.disabled = true;
+        return false;
+      }
+
+      if (val1.length < 4) {
+        statusHint.textContent = isEn ? '⚠️ Minimum 4 characters' : '⚠️ Минимум 4 символа';
+        statusHint.className = 'status-hint warn';
+        submitBtn.disabled = true;
+        return false;
+      }
+
+      if (val2.length > 0 && val1 !== val2) {
+        statusHint.textContent = isEn ? '❌ Passwords do not match' : '❌ Пароли не совпадают';
+        statusHint.className = 'status-hint error';
+        submitBtn.disabled = true;
+        return false;
+      }
+
+      if (val1 === val2) {
+        statusHint.textContent = isEn ? '✅ Passwords match' : '✅ Пароли совпадают';
+        statusHint.className = 'status-hint success';
+        submitBtn.disabled = false;
+        return true;
+      }
+
+      submitBtn.disabled = true;
+      return false;
+    }
+
+    inputEl.addEventListener('input', validate);
+    confirmInput.addEventListener('input', validate);
 
     function submitData() {
       const val = inputEl.value.trim();
-      if (!val) {
-        if (tg) tg.HapticFeedback?.notificationOccurred('error');
-        inputEl.focus();
-        return;
+
+      if (requiresConfirmation) {
+        if (!validate()) {
+          if (tg) tg.HapticFeedback?.notificationOccurred('error');
+          return;
+        }
+      } else {
+        if (!val) {
+          if (tg) tg.HapticFeedback?.notificationOccurred('error');
+          inputEl.focus();
+          return;
+        }
       }
 
       const payload = {
-        action: mode,
+        action: mode === 'register' ? 'setup' : mode,
         value: val
       };
 
-      if (tg) {
-        tg.HapticFeedback?.notificationOccurred('success');
-        tg.sendData(JSON.stringify(payload));
-        tg.close();
+      if (tg && typeof tg.sendData === 'function') {
+        try {
+          tg.HapticFeedback?.notificationOccurred('success');
+          tg.sendData(JSON.stringify(payload));
+          tg.close();
+        } catch (err) {
+          console.error('sendData error:', err);
+          alert((isEn ? 'Error sending data to Telegram: ' : 'Ошибка отправки данных боту: ') + err.message);
+        }
       } else {
-        alert('Данные введены: ' + mode);
+        alert((isEn ? 'Data prepared: ' : 'Данные подготовлены: ') + JSON.stringify(payload));
       }
     }
 
     inputEl.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') {
+        if (requiresConfirmation && !confirmInput.value) {
+          confirmInput.focus();
+        } else {
+          submitData();
+        }
+      }
+    });
+
+    confirmInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
         submitData();
       }
     });
+
+    // Run initial validation state
+    validate();
   </script>
 </body>
 </html>
