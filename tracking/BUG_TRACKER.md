@@ -37,6 +37,7 @@
 | `FIX-BUG-018` | 2026-09-16 | UI / UX | Синхронизирована логика закрытия инлайн-меню и навигации Reply-клавиатуры без дублирования | kobaltgit |
 | `FIX-BUG-019` | 2026-09-16 | Chat / Media | Добавлен перехват открытых API-ключей Google и защита от гонок сообщений | kobaltgit |
 | `FIX-BUG-020` | 2026-09-17 | Handlers / Routing | Исправлен синтаксис Command: объединены кортежи аргументов Command("a", "b") вместо двух фильтров | kobaltgit |
+| `FIX-BUG-021` | 2026-09-17 | UI / Mobile | Отложенный delete, is_persistent=False для сворачивания клавиатуры, safe_send_menu и fallback plain text | kobaltgit |
 
 ---
 
@@ -166,6 +167,8 @@
   1. Синтаксис фильтров исправлен на объединение команд внутри одного объекта: `Command("guide", "help_guide")`, `Command("feedback", "support")`, `Command("profile", "account")`, `Command("documents", "memory")`.
   2. В `handlers/chat.py` добавлен предохранитель от отправки нераспознанных слэш-команд в Gemini API.
 * **Верификация (Тестирование):**
+  - Добавлен юнит-тест `TestCommandFilters.test_multi_command_filter` в `tests/test_fixes_and_i18n.py`. Все тесты пройдены.
+
 ### [FIX-BUG-021] Исправление: Зависание инлайн-кнопок на мобильных клиентах Telegram и нескрываемая клавиатура
 * **Дата закрытия:** 2026-09-17
 * **Затронутые файлы:** `keyboards/reply.py`, `core/ui_helpers.py`, `handlers/commands.py`, `handlers/auth.py`, `handlers/settings.py`, `handlers/profile.py`, `handlers/dialogs.py`, `handlers/memory.py`, `handlers/start.py`, `tests/test_new_features.py`

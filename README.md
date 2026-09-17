@@ -57,13 +57,13 @@
   * Сервер не хранит мастер-ключей и не имеет доступа к переписке и личным API-ключам пользователей.
   * Пароли хэшируются через **bcrypt**. Ключи шифрования выводятся в оперативной памяти через **PBKDF2-HMAC-SHA256 (480 000 итераций)** и шифруются **Fernet**.
   * Поддержка паник-пароля (экстренное стирание всех персональных диалогов) и автоблокировка хранилища по таймеру неактивности (1 час).
-  * Анти-утечка ключей: регулярные выражения мгновенно перехватывают и удаляют случайно отправленные в чат токены AIzaSy....
+  * Анти-утечка ключей: регулярные выражения мгновенно перехватывают и удаляют случайно отправленные в чат токены `AIzaSy...`.
 * **Плавный безопасный стриминг (Smart Throttler):**
   * Генерация ответа в реальном времени с ограничением чанка в 3200 символов, предотвращающая падение Telegram по лимиту 4096 знаков.
   * Автоматическое закрытие незавершённых тегов форматирования Markdown при разбиении ответа на части.
 * **Векторная память (RAG / ChromaDB):**
   * Асинхронное векторное хранилище на базе ChromaDB.
-  * Загрузка документов (PDF, TXT, MD), семантический поиск релевантных контекстов перед отправкой запроса нейросети.
+  * Загрузка документов (PDF, TXT, MD, DOCX), семантический поиск релевантных контекстов перед отправкой запроса нейросети.
   * Полная совместимость с коллекциями диалогов v1.
 * **Telegram Mini App (WebApp) или Чат-режим:**
   * Всплывающее окно для ввода паролей и API-ключей с маскировкой ••••••.
@@ -76,7 +76,7 @@
 
 ## Архитектура безопасности (Zero-Knowledge)
 
-`
+```text
 [Пользователь]
       │
       ├── Вводит мастер-пароль (в WebApp или в чат)
@@ -90,15 +90,15 @@
       ├── Расшифровка личного Gemini API ключа и контекста диалогов
       ▼
 [Таймер неактивности (1 час)] ──> Ключ удаляется из памяти (RAM Purge)
-`
+```
 
-> **Важно:** Файл .env **не содержит** мастер-ключей шифрования. Даже при полном взломе сервера базы данных данные остаются надёжно защищены стойкой криптографией.
+> **Важно:** Файл `.env` **не содержит** мастер-ключей шифрования. Даже при полном взломе сервера базы данных данные остаются надёжно защищены стойкой криптографией.
 
 ---
 
 ## Структура проекта
 
-`	ext
+```text
 MyGemini_Zero_v2/
 ├── .github/
 │   └── workflows/
@@ -107,26 +107,44 @@ MyGemini_Zero_v2/
 │   ├── config.py           # Настройки pydantic-settings, модели, цены
 │   ├── crypto.py           # Zero-Knowledge: bcrypt, PBKDF2 (480k), Fernet
 │   ├── database.py         # Асинхронный SQLAlchemy движок и SessionFactory
+│   ├── localization.py     # Полный i18n модуль локализации (RU / EN)
+│   ├── ui_helpers.py       # Безопасное редактирование, гашение спиннера, safe_send_menu
 │   └── logger.py           # Ротация логов и цветной вывод
 ├── database/               # Модели данных и репозитории
 │   ├── models/             # User, Dialog, Conversation, UserProfile, etc.
 │   └── repositories/       # Асинхронные репозитории для работы с БД
+├── guides/                 # Интерактивное руководство пользователя (RU / EN)
+│   ├── full_guide_ru.md
+│   └── full_guide_en.md
 ├── handlers/               # Обработчики сообщений и команд aiogram 3
-│   ├── admin.py            # Админ-панель, CSV-экспорт, рассылка
+│   ├── admin.py            # Админ-панель, CSV-экспорт, рассылка, управление пользователями
 │   ├── auth.py             # Вход, регистрация, паник-пароль, WebApp Data
 │   ├── chat.py             # Диалог с Gemini, голос, фото, документы
-│   ├── dialogs.py          # Список и переключение диалогов
-│   ├── memory.py           # Просмотр и удаление документов RAG
-│   ├── settings.py         # Выбор моделей, стилей общения, ввод ключа
-│   ├── start.py            # Команда /start и главное меню
-│   └── subscription.py     # Тарифные планы и оплата
+│   ├── commands.py         # Слэш-команды, Reply-кнопки, единое сервисное меню
+│   ├── dialogs.py          # Список и переключение диалогов с маркером 🟢
+│   ├── feedback.py         # Обратная связь и отправка отчетов админу
+│   ├── guide.py            # Интерактивное руководство по главам (/guide)
+│   ├── history.py          # Просмотр истории диалогов по дням с инлайн-календарем
+│   ├── memory.py           # Просмотр, удаление документов RAG и архивация
+│   ├── profile.py          # Личный кабинет и анкета (8 вопросов)
+│   ├── settings.py         # Выбор моделей, стилей общения, язык, ввод ключа
+│   ├── start.py            # Команда /start и первичный ZK-онбординг
+│   ├── subscription.py     # Тарифные планы и Telegram Payments
+│   └── translate.py        # Специализированный быстрый переводчик (/translate)
 ├── keyboards/              # Клавиатуры Telegram (Inline & Reply)
-│   └── inline.py           # Интерактивные меню, бейджи моделей, WebApp
+│   ├── inline.py           # Интерактивные меню, бейджи моделей, WebApp
+│   └── reply.py            # Сворачиваемая клавиатура (is_persistent=False)
 ├── middlewares/            # Промежуточные слои aiogram
 │   ├── antispam.py         # Перехват утечек API-ключей и спама
-│   └── auth.py             # Менеджер сессий, тайм-аут замка, техработы
+│   ├── auth.py             # Менеджер сессий, тайм-аут замка, инжектор языка
+│   └── logging.py          # Структурированное логирование апдейтов
 ├── services/               # Внешние интеграции и логика
+│   ├── account.py          # Форматирование профиля и звания пользователя
+│   ├── calendar_helper.py  # Генератор инлайн-календаря для истории
+│   ├── dialog_namer.py     # Авто-генерация заголовков диалогов
+│   ├── error_parser.py     # Расширенный парсер ошибок Gemini API (429, 503, safety)
 │   ├── gemini.py           # Google GenAI SDK (стриминг, поиск, 429 fallback)
+│   ├── guide_manager.py    # Менеджер глав интерактивного руководства
 │   ├── media.py            # Обработка фото, аудио и документов
 │   ├── throttler.py        # Умный сплиттер ответов MarkdownV2 (3200 симв.)
 │   └── vector_store.py     # Асинхронная обёртка ChromaDB RAG
@@ -135,17 +153,24 @@ MyGemini_Zero_v2/
 ├── docs/                   # Зеркало для публикации через GitHub Pages
 │   └── index.html          # Готово для бесплатного хостинга WebApp
 ├── tracking/               # Летопись разработки и чек-листы
-│   ├── CHECKLIST.md        # Статус всех задач проекта
-│   └── DEVLOG.md           # Авторский дневник разработки
+│   ├── BUGS.md             # Реестр багов
+│   ├── BUG_TRACKER.md      # Журнал исправления ошибок (RCA)
+│   ├── CHECKLIST.md        # Чек-лист разработки
+│   ├── DEVLOG.md           # Авторский дневник разработки
+│   └── ROADMAP.md          # Дорожная карта проекта
 ├── tests/                  # Автотесты
-│   └── test_e2e.py         # Полный E2E-тест боевой базы данных и криптографии
+│   ├── test_e2e.py         # Сквозной E2E-тест боевой базы данных и криптографии
+│   ├── test_fixes_and_i18n.py # Тесты локализации, UI-хелперов, календаря и команд
+│   ├── test_new_features.py   # Тесты функционала v2.1
+│   └── test_v1_compatibility.py # Тесты совместимости с базой данных v1
 ├── .env.example            # Пример переменных окружения
 ├── .gitignore              # Исключение БД, ключей, логов и кэша
 ├── Dockerfile              # Мультистейдж сборка контейнера
 ├── docker-compose.yml      # Оркестрация с персистентными volume
+├── mygemini-v2.service     # Готовый systemd unit-файл для Linux
 ├── requirements.txt        # Зависимости Python
 └── main.py                 # Точка входа: long-polling и graceful shutdown
-`
+```
 
 ---
 
@@ -160,8 +185,8 @@ MyGemini_Zero_v2/
 ## Быстрый старт (Локальная разработка)
 
 ### 1. Клонирование и установка зависимостей
-`ash
-git clone https://github.com/your-username/MyGemini_Zero_v2.git
+```bash
+git clone https://github.com/kobaltgit/MyGemini_Zero_v2.git
 cd MyGemini_Zero_v2
 
 # Создание виртуального окружения
@@ -176,23 +201,23 @@ venv\Scripts\activate
 # Установка пакетов
 pip install --upgrade pip
 pip install -r requirements.txt
-`
+```
 
 ### 2. Настройка переменных окружения
 Скопируйте пример файла конфигурации:
-`ash
+```bash
 cp .env.example .env
-`
-Откройте .env и укажите обязательные параметры:
-`ini
+```
+Откройте `.env` и укажите обязательные параметры:
+```ini
 BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
 ADMIN_USER_ID=123456789
-`
+```
 
 ### 3. Запуск бота
-`ash
+```bash
 python main.py
-`
+```
 
 ---
 
@@ -202,67 +227,47 @@ python main.py
 
 ### Шаг 1. Размещение на сервере
 Склонируйте или загрузите проект рядом со старой версией:
-`ash
+```bash
 cd /home/user/MyGemini_Zero_v2
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env # или скопируйте рабочий .env из старого бота
-`
+```
 
-### Шаг 2. Создание systemd unit-файла
-Создайте файл /etc/systemd/system/mygemini-v2.service:
-`ash
+### Шаг 2. Настройка systemd службы
+В репозитории уже подготовлен готовый файл [mygemini-v2.service](mygemini-v2.service). Скопируйте его:
+```bash
+sudo cp mygemini-v2.service /etc/systemd/system/mygemini-v2.service
 sudo nano /etc/systemd/system/mygemini-v2.service
-`
-Вставьте конфигурацию (замените user на имя вашего пользователя в Linux):
-`ini
-[Unit]
-Description=MyGemini Zero v2 Telegram Bot
-After=network.target
-
-[Service]
-Type=simple
-User=user
-WorkingDirectory=/home/user/MyGemini_Zero_v2
-ExecStart=/home/user/MyGemini_Zero_v2/venv/bin/python main.py
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-`
-
-Примените конфигурацию:
-`ash
+```
+Отредактируйте пути и имя пользователя под ваш сервер, затем примените конфигурацию:
+```bash
 sudo systemctl daemon-reload
-`
+```
 
 ### Шаг 3. Переключение на новую версию
 Остановите старую службу и запустите v2:
-`ash
+```bash
 sudo systemctl stop mygemini && sudo systemctl start mygemini-v2
-`
+```
 
 Проверьте логи в реальном времени:
-`ash
+```bash
 journalctl -u mygemini-v2 -f
-`
+```
 
 Если всё работает штатно, включите автозапуск v2:
-`ash
+```bash
 sudo systemctl enable mygemini-v2
 sudo systemctl disable mygemini
-`
+```
 
 ### Мгновенный откат (Rollback)
 Если потребуется срочно вернуть прежнюю версию бота:
-`ash
+```bash
 sudo systemctl stop mygemini-v2 && sudo systemctl start mygemini
-`
+```
 
 ---
 
@@ -270,7 +275,7 @@ sudo systemctl stop mygemini-v2 && sudo systemctl start mygemini
 
 Проект полностью упакован в Docker:
 
-`ash
+```bash
 # Сборка и запуск в фоновом режиме
 docker compose up -d --build
 
@@ -279,14 +284,14 @@ docker compose logs -f
 
 # Остановка
 docker compose down
-`
-База данных SQLite и векторное хранилище монтируются через тома (volumes) в ./database и ./vector_store, сохраняя данные при перезапусках.
+```
+База данных SQLite и векторное хранилище монтируются через тома (volumes) в `./database` и `./vector_store`, сохраняя данные при перезапусках.
 
 ---
 
 ## Автодеплой WebApp (GitHub Pages)
 
-В проект встроен GitHub Actions workflow (.github/workflows/deploy-pages.yml), который **автоматически развертывает страницу WebApp при каждом коммите/пуше**.
+В проект встроен GitHub Actions workflow (`.github/workflows/deploy-pages.yml`), который **автоматически развертывает страницу WebApp при каждом коммите/пуше**.
 
 ### Как включить:
 1. Залейте репозиторий на **GitHub**.
@@ -294,10 +299,10 @@ docker compose down
 3. В выпадающем меню **Source** переключите на:
    * **GitHub Actions**
 4. При каждом пуше в ветку main GitHub автоматически опубликует страницу.
-5. Скопируйте полученную ссылку (например, https://username.github.io/MyGemini_Zero_v2/) и укажите её в .env:
-   `ini
+5. Скопируйте полученную ссылку (например, `https://username.github.io/MyGemini_Zero_v2/`) и укажите её в `.env`:
+   ```ini
    WEBAPP_URL=https://username.github.io/MyGemini_Zero_v2/
-   `
+   ```
 6. Перезапустите бота. Готово!
 
 ---
@@ -305,18 +310,18 @@ docker compose down
 ## Миграция со старой версии (v1)
 
 Версия v2 создана со строгим соблюдением **100% бинарной и алгоритмической совместимости**:
-* Используется та же схема SQLite-базы ot_database.db.
+* Используется та же схема SQLite-базы `bot_database.db`.
 * Алгоритм шифрования PBKDF2 строго зафиксирован на **480 000 итераций**, что гарантирует корректную расшифровку старых паролей и API-ключей пользователей.
-* Структура ChromaDB ector_store/ полностью считывается без переиндексации.
+* Структура ChromaDB `vector_store/` полностью считывается без переиндексации.
 
 ---
 
 ## Тестирование
 
-Для проверки работоспособности базы, криптографических функций и моделей запустите E2E-тест:
-`ash
-pytest tests/test_e2e.py -v
-`
+Для проверки работоспособности базы, криптографических функций и моделей запустите тестовый набор:
+```bash
+python -m unittest discover tests
+```
 
 ---
 
