@@ -174,8 +174,12 @@ class TestServices(unittest.TestCase):
         self.assertTrue(len(full_ru) > 100)
         self.assertTrue(len(full_en) > 100)
 
-        sec_api = get_guide_section("API_KEY", "ru")
-        self.assertNotIn("не найден", sec_api)
+        for sec in ["ZERO_KNOWLEDGE", "API_KEY", "RAG", "MODELS", "SUBSCRIPTION", "COMMANDS", "SECURITY"]:
+            sec_ru = get_guide_section(sec, "ru")
+            self.assertNotIn("не найден", sec_ru)
+            sec_en = get_guide_section(sec, "en")
+            self.assertNotIn("not found", sec_en)
+            self.assertNotIn("не найден", sec_en)
 
     def test_calendar_helper(self):
         kb = create_calendar_keyboard(year=2026, month=9, lang_code="ru")

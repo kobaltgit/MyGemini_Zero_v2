@@ -65,36 +65,43 @@ def load_guides():
         # Не выбрасываем исключение, чтобы бот мог работать хотя бы с русской версией
         logger.exception(f"Ошибка при загрузке английской справки: {e}")
 
+SECTION_ALIASES = {
+    "SECURITY": "ZERO_KNOWLEDGE",
+    "FEATURES": "RAG",
+    "HELP": "COMMANDS",
+    "COMMAND": "COMMANDS",
+    "SUBSCRIPTIONS": "SUBSCRIPTION",
+    "PLANS": "SUBSCRIPTION",
+    "MODEL": "MODELS",
+    "API": "API_KEY",
+}
+
+
 def get_full_guide(lang: str = 'ru') -> str:
     """
     Возвращает полный текст справки для указанного языка.
-    
-    Args:
-        lang (str): Код языка ('ru' или 'en').
-
-    Returns:
-        str: Полный текст справки или строка с сообщением об ошибке.
     """
+    global _full_guide_ru, _full_guide_en
+    if not _full_guide_ru:
+        load_guides()
+
     if lang == 'ru' and _full_guide_ru:
         return _full_guide_ru
     if lang == 'en' and _full_guide_en:
         return _full_guide_en
         
-    return "К сожалению, текст справки для выбранного языка не найден."
+    return _full_guide_ru or "К сожалению, текст справки для выбранного языка не найден."
+
 
 def get_guide_section(section_name: str, lang: str = 'ru') -> str:
     """
     Извлекает конкретную секцию из полного текста справки.
-
-    Args:
-        section_name (str): Имя секции (например, 'API_KEY').
-        lang (str): Код языка ('ru' или 'en').
-
-    Returns:
-        str: Текст указанной секции или сообщение об ошибке.
     """
+    sec = section_name.strip().upper()
+    canonical_sec = SECTION_ALIASES.get(sec, sec)
+
     full_guide = get_full_guide(lang)
-    if "не найден" in full_guide:
+    if not full_guide or "не найден" in full_guide:
         return full_guide
 
     # Определяем теги для поиска в зависимости от языка
@@ -108,17 +115,15 @@ def get_guide_section(section_name: str, lang: str = 'ru') -> str:
     start_tag = lang_tags['start']
     end_tag = lang_tags['end']
 
-    # Собираем динамическое регулярное выражение
-    pattern = re.compile(
-        rf"# \[{re.escape(start_tag)}: {re.escape(section_name.upper())}\](.*?)# \[{re.escape(end_tag)}: {re.escape(section_name.upper())}\]",
-        re.DOTALL
-    )
-    
-    match = pattern.search(full_guide)
-    
-    if match:
-        # match.group(1) возвращает текст между начальным и конечным тегами
-        return match.group(1).strip()
+    # Поиск по каноническому имени секции
+    for target in (canonical_sec, sec):
+        pattern = re.compile(
+            rf"# \[{re.escape(start_tag)}: {re.escape(target)}\](.*?)# \[{re.escape(end_tag)}: {re.escape(target)}\]",
+            re.DOTALL
+        )
+        match = pattern.search(full_guide)
+        if match:
+            return match.group(1).strip()
     
     logger.warning(f"Секция '{section_name}' не найдена в справке для языка '{lang}'.")
     return f"Раздел справки '{section_name}' не найден."

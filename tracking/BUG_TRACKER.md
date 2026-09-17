@@ -39,6 +39,7 @@
 | `FIX-BUG-020` | 2026-09-17 | Handlers / Routing | Исправлен синтаксис Command: объединены кортежи аргументов Command("a", "b") вместо двух фильтров | kobaltgit |
 | `FIX-BUG-021` | 2026-09-17 | UI / Mobile | Отложенный delete, is_persistent=False для сворачивания клавиатуры, safe_send_menu и fallback plain text | kobaltgit |
 | `FIX-BUG-022` | 2026-09-17 | UI / WebApp | Восстановлено WebApp-окно ввода мастер-пароля через ReplyKeyboard, добавлено подтверждение при регистрации | kobaltgit |
+| `FIX-BUG-023` | 2026-09-17 | Documentation | Синхронизированы 6 разделов руководства /guide, добавлены алиасы и удалены ссылки на картинки | kobaltgit |
 
 ---
 
@@ -204,6 +205,21 @@
   - Добавлены тесты `test_locked_reply_keyboard` и `test_setup_reply_keyboard` в `tests/test_fixes_and_i18n.py`.
   - Все 26 unit-тестов успешно пройдены (`Ran 26 tests in 0.318s OK`).
   - Проверена живая разблокировка в Telegram на сервере.
+
+### [FIX-BUG-023] Исправление: Синхронизация разделов руководства /guide и удаление ссылок на изображения
+* **Дата закрытия:** 2026-09-17
+* **Затронутые файлы:** `guides/full_guide_ru.md`, `guides/full_guide_en.md`, `handlers/guide.py`, `services/guide_manager.py`, `tests/test_fixes_and_i18n.py`
+* **Первопричина (RCA):**
+  1. Теги секций в `handlers/guide.py` (`ZERO_KNOWLEDGE`, `RAG`, `MODELS`, `SUBSCRIPTION`) не совпадали с устаревшими тегами в `full_guide_ru.md` и `full_guide_en.md` (`SECURITY`, `FEATURES`, `SETTINGS`). В результате все кнопки меню, кроме `API_KEY`, выдавали ошибку «Раздел не найден».
+  2. В тексте инструкций присутствовали неработающие ссылки на внешние скриншоты (`ibb.co`).
+  3. В `handle_guide_section` использовался `parse_mode="Markdown"`, вызывавший ошибки парсинга Telegram при наличии спецсимволов.
+* **Применённое решение:**
+  1. Полностью переписаны `guides/full_guide_ru.md` и `guides/full_guide_en.md` на чистый текст без ссылок на картинки с 6 актуальными разделами: `ZERO_KNOWLEDGE`, `API_KEY`, `RAG`, `MODELS`, `SUBSCRIPTION`, `COMMANDS`.
+  2. В `services/guide_manager.py` добавлен словарь алиасов `SECTION_ALIASES` и авто-подгрузка файлов справки.
+  3. В `handlers/guide.py` добавлена кнопка «💬 Список команд» и переключен безопасный `parse_mode="HTML"`.
+* **Верификация (Тестирование):**
+  - Расширен юнит-тест `test_guide_manager` в `tests/test_fixes_and_i18n.py` на проверку всех 6 секций на обоих языках (RU и EN).
+  - Все 26 тестов успешно пройдены (`Ran 26 tests in 0.402s OK`).
 
 ### Шаблон карточки исправления:
 

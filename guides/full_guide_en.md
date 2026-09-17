@@ -1,162 +1,156 @@
-# 📖 Full Guide to the MyGemini Zero Bot
+# 📖 Complete Guide to MyGemini Zero v2
 
-Welcome! This guide will help you master all the features of your personal AI assistant.
+Welcome! This interactive guide will help you explore and master all the features of your personal Zero-Knowledge AI assistant.
+
+---
+
+# [START OF SECTION: ZERO_KNOWLEDGE]
+
+🔐 <b>Security & Zero-Knowledge Architecture</b>
+
+MyGemini Zero v2 is built on the principle of complete privacy: <b>no one, including bot developers and server administrators, can read your dialogues, documents, or API keys</b>.
+
+<b>1. Master Password:</b>
+• <b>We do not store your password:</b> The database only stores a cryptographic salted hash. It is mathematically impossible to reconstruct the original password from it.
+• <b>On-the-fly encryption:</b> Each time you unlock the vault, an ephemeral symmetric <code>Fernet</code> encryption key is generated in server RAM. It exists solely in volatile memory and is instantly erased when locked or after 1 hour of inactivity.
+• ⚠️ <b>IMPORTANT:</b> If you forget your master password, recovering your conversation history is <b>impossible</b>. There is no password reset mechanism, ensuring true Zero-Knowledge security.
+
+<b>2. Anti-Spying & Clean Chat:</b>
+• Password entry is performed via a secure Telegram Mini App modal popup masked with dots <code>••••••</code>. Secrets never remain in your chat history.
+• If you enter secrets in regular chat, the bot automatically deletes your message within fractions of a second.
+
+<b>3. Panic Password (Emergency Wipe):</b>
+For extreme situations, you can configure an emergency "Panic Password" (in «⚙️ Settings» ➡️ «🚨 Setup Panic Password»):
+• If you enter this panic password at unlock instead of your master password, the bot will <b>instantly and permanently wipe</b> all dialogues, messages, vector documents, and keys from the database.
+• This provides "plausible deniability" to protect your data in critical circumstances.
+
+# [END OF SECTION: ZERO_KNOWLEDGE]
 
 ---
 
 # [START OF SECTION: API_KEY]
 
-### 🔑 How to Get and Set a Google API Key
+🔑 <b>How to Get and Set Your Google Gemini API Key</b>
 
-An API key is your personal pass to the Gemini neural network. The bot needs it to send requests on your behalf. It's secure: the bot encrypts and stores your key, never sharing it with third parties.
+An API key is your personal credential for the Google Gemini neural network. Using your own API key provides maximum speed, higher limits, and direct access to the latest models.
 
-#### ❗ Important Note for Users from Certain Regions
+<b>1. Step-by-Step Instructions:</b>
+1. Navigate to Google AI Studio: <a href="https://aistudio.google.com/app/apikey">https://aistudio.google.com/app/apikey</a>.
+2. Sign in with your Google account.
+3. Click the blue button <b>«Create API Key»</b> (or «Create API key in new project»).
+4. Copy your newly generated key (it starts with <code>AIzaSy...</code>).
 
-Access to Google AI services may sometimes be restricted depending on your geographical location. If you see an error, an unavailability message, or a blank page when clicking the links below, try the following:
+ℹ️ <i>Note: If Google AI Studio is unavailable in your region, use a secure network connection to access Google services.</i>
 
-*   **Use a special extension for your browser.** There are extensions that help bypass regional restrictions and provide access to international websites. You can find them in the official extension store for your browser (Chrome, Firefox, etc.).
-*   **Use services that change your network connection.** Such programs route your internet traffic through a server in another country, allowing you to "get around" geographical blocks.
-
-After activating one of these tools, refresh the page.
-
-#### Step-by-Step Instructions
-
-1.  **Go to Google AI Studio:** Navigate to the official [Google AI Studio](https://makersuite.google.com/app) website. You will need to sign in with your Google account.
-
-2.  **Navigate to API key creation:** In the menu on the left, find the **"Get API key"** option or use the direct link: [https://makersuite.google.com/app/apikey](https://makersuite.google.com/app/apikey).
-
-3.  **Create the key:** Click the blue button **"Create API key in new project"**.
-
-    ![Step 3 - create key button](https://i.ibb.co/hJm9HHhM/Screenshot-of-Chat-Google-AI-Studio.jpg)
-
-4.  **Copy the key:** After a few seconds, your new key (a long string of characters) will appear in the list. Click the "copy" icon next to it.
-
-    ![Step 4 - generated key](https://i.ibb.co/Kc0cbTmL/Screenshot-of-Get-API-key-Google-AI-Studio.jpg)
-
-5.  **Set the key in the bot:**
-    *   Return to this chat.
-    *   Send the `/set_api_key` command.
-    *   Paste the copied key into the message box and send it.
-
-The bot will verify the key, and if everything is correct, you can start chatting!
+<b>2. Setting the Key in the Bot:</b>
+1. Open «⚙️ Settings» ➡️ «🔑 API Key» in the bot (or use the <code>/apikey_info</code> command).
+2. Choose modal window entry or send the key directly in chat.
+3. The message containing your key will be instantly deleted, and the key will be encrypted with your master password (Zero-Knowledge) before storing.
 
 # [END OF SECTION: API_KEY]
 
 ---
 
-# [START OF SECTION: SECURITY]
+# [START OF SECTION: RAG]
 
-### 🔐 Security: Zero-Knowledge
+📎 <b>Vector Document Memory (RAG)</b>
 
-This bot is built on the principle of maximum privacy. This means that **no one but you can access your data**.
+<b>RAG (Retrieval-Augmented Generation)</b> turns the bot into a knowledgeable expert on your personal documents and notes.
 
-#### Master Password
+<b>1. How to Upload a Document:</b>
+• Send a document file to the chat (supported formats: <b>PDF, TXT, MD, DOCX</b>).
+• The bot automatically extracts the text, splits it into semantic chunks, and builds vector embeddings in a local <b>ChromaDB</b> store.
 
-On your first start, you create a **master password**. This is the only key to your "digital vault."
+<b>2. How RAG Works During Conversations:</b>
+• When you ask a question about your document, the bot instantly retrieves the most relevant excerpts and injects them as factual context for the Gemini model.
+• The model generates accurate, fact-based answers with citations from your material.
 
-*   **We do not store your password.** The database only stores its encrypted "fingerprint" (hash), from which the password itself cannot be recovered.
-*   **The encryption key is created on-the-fly.** Each time you enter your password to unlock a session, a temporary key is generated from it. It only exists in RAM and disappears after the session ends.
-*   **❗️ IMPORTANT:** If you forget your master password, it will be **impossible** to recover your data. Please write it down and keep it in a safe place.
+<b>3. Managing Files («📄 Documents»):</b>
+• In the bottom reply menu, tap «📄 Documents» (or use the <code>/documents</code> command).
+• View all uploaded files, chunk counts, and upload dates.
+• Delete any document with a single tap on «🗑 Delete» to reclaim storage.
+• Documents are isolated per dialogue: conversations with attached knowledge bases are marked with a 📎 icon.
 
-#### Panic Password
-
-For emergency situations, you can set an optional **panic password**.
-
-*   **What does it do?** If you enter it instead of your main password, the bot will pretend to unlock the session successfully. In reality, it will **immediately and irreversibly delete all your message history and long-term memory content**.
-*   **Why is this useful?** This is a "plausible deniability" feature that provides an extra layer of protection in critical situations where you might need to prove that you have no saved data.
-
-# [END OF SECTION: SECURITY]
-
----
-
-# [START OF SECTION: FEATURES]
-
-### 🚀 Core Features
-
-#### 🧠 Communication & Memory
-
-*   **Main Chat:** Simply type your questions or tasks in the chat. The bot maintains the context of the conversation within the active dialog.
-*   **Image Analysis:** Send an image to the bot (as a photo, not a file). You can add a caption to the image to specify your request, for example: "What breed is this dog?" or "Create a recipe from these ingredients."
-*   **Long-Term Memory & Files (`/memorize`):** The bot not only remembers recent messages but can also store large amounts of information. Using the `/memorize` command, you can upload a `.txt` or `.md` file. Its content will be added to the memory of the **current dialog**, and the bot will be able to use this information in subsequent responses.
-
-#### 🗂️ Dialog Management (`/dialogs`)
-
-The bot allows you to have multiple independent conversations at the same time. This is useful for keeping the contexts of different tasks (e.g., "Work" and "Travel") separate.
-*   **Create:** Click "➕ Create New" to start a new conversation from scratch.
-*   **Switch:** Simply click on a dialog's name in the list to make it active. Its context will be loaded immediately.
-*   **Rename:** Each dialog has an "✏️" button that lets you give it a new, more descriptive name.
-*   **Delete:** Click "❌" next to an inactive dialog to delete it along with its entire history. **The active dialog cannot be deleted.**
-
-#### 📄 Data Management
-
-You have full control over your data. These options are available in the `Settings ➡️ Data Management` menu.
-
-*   **Memory Archiving (`/archive`):** Over time, your dialog history can become very large. This feature allows you to "compress" old messages. The bot will analyze them, create a concise summary, and replace dozens or hundreds of old entries with it. This frees up space and speeds up memory searches.
-*   **Complete Data Erasure:** If you want to start fresh, you can completely delete all message history and memory content across all dialogs. Your profile, passwords, and API key will be preserved. **This action is irreversible.**
-
-#### 👤 Profile & Personalization (`/profile`)
-
-During registration, the bot asks you to fill out a brief profile questionnaire (your role, goals, communication style, etc.). This information, like all your data, is securely encrypted. The bot uses it to tailor its responses to you. You can always view or change your profile using the `/profile` command.
-
-#### 📜 History & Statistics
-
-*   **Message History (`/history`):** You can view the entire conversation with the bot in the current active dialog for any selected date.
-*   **Usage Statistics (`/usage`):** This command shows how many tokens have been used for generating responses today and for the current month, as well as an estimated cost in USD based on public Google tariffs.
-
-# [END OF SECTION: FEATURES]
+# [END OF SECTION: RAG]
 
 ---
 
-# [START OF SECTION: SETTINGS]
+# [START OF SECTION: MODELS]
 
-### ⚙️ Settings (`/settings`)
+🤖 <b>Model Selection, Personas, and Communication Styles</b>
 
-In this menu, you can fine-tune the bot's behavior to suit your needs.
+In the «⚙️ Settings» menu, you can customize the bot's intellect, role, and tone.
 
-#### 🎭 Assistant Persona
-This is the most important setting. The "Persona" defines the role the bot will play in communication. For example, you can turn it into a "Python Expert," a "Financial Advisor," or a "Historian." Choosing a persona dramatically changes the style and depth of the answers. If a persona is selected, the "Communication Style" setting below will be ignored.
+<b>1. Google Gemini Model Family:</b>
+• <b>Gemini 2.5 Flash</b> (default) — fast, intelligent, and versatile model for everyday tasks and document analysis.
+• <b>Gemini 2.5 Pro</b> — powerful flagship model for complex programming, deep analytical reasoning, mathematics, and multi-step logic.
+• <b>Gemini 2.5 Flash Lite</b> — ultra-fast, lightweight model with minimal latency.
+• <b>Gemini 2.5 Thinking</b> — model equipped with extensive internal step-by-step reasoning before delivering an answer.
 
-#### 🧠 Gemini Model
-Here you can choose which version of the neural network to use.
-*   `gemini-1.5-flash`: A fast, efficient, and very inexpensive model, great for most tasks. It is used by default.
-*   `gemini-1.5-pro`: A more powerful and "smarter" model, better at complex creative and analytical tasks, but it is slower and more expensive.
+<b>2. Assistant Personas («🎭 Persona»):</b>
+Switch the specialized role of your assistant:
+• <b>General Assistant:</b> versatile everyday helper.
+• <b>Code Expert:</b> writes clean, documented code in Python, JS, Go, etc., debugs errors, and optimizes algorithms.
+• <b>Text Editor:</b> improves writing style, proofreads grammar, and adapts articles.
+• <b>Financial Advisor, Teacher, Creative Writer:</b> focused expert roles.
 
-#### 👔 Communication Style
-This setting only works if "Default Assistant" is selected as the "Persona." It allows you to set the general tone of the answers:
-*   **Formal:** A strict and business-like style.
-*   **Informal:** Friendly and simple language.
-*   **Concise:** Answers to the point, without fluff.
-*   **Detailed:** The most comprehensive explanations.
+<b>3. Communication Styles («🎨 Style»):</b>
+• <b>Formal:</b> academic and professional tone.
+• <b>Friendly:</b> warm and casual tone.
+• <b>Concise:</b> direct, to-the-point answers without fluff.
+• <b>Detailed:</b> comprehensive explanations with examples.
 
-#### 🌐 Interface Language
-You can switch the language of all bot buttons and system messages between Russian and English. This does not affect the language in which you communicate with Gemini.
+# [END OF SECTION: MODELS]
 
-# [END OF SECTION: SETTINGS]
+---
+
+# [START OF SECTION: SUBSCRIPTION]
+
+💎 <b>Subscriptions & Plans</b>
+
+Subscriptions unlock access to advanced AI capabilities and expand your storage limits.
+
+<b>Subscription Benefits:</b>
+• Access to flagship models: <b>Gemini 2.5 Pro</b> and <b>Thinking</b>.
+• Increased document upload allowances and vector memory storage.
+• Higher daily token quotas and priority response latency.
+• Verified subscriber badge 🟢 in your profile.
+
+<b>Managing Your Subscription:</b>
+• Go to «👤 Profile» ➡️ «💎 Subscription» (or use the <code>/subscribe</code> command).
+• Choose your desired period (1 month, 3 months, or 1 year) and follow the simple on-screen instructions.
+• Expiration dates and plan details are always visible in your profile card.
+
+# [END OF SECTION: SUBSCRIPTION]
 
 ---
 
 # [START OF SECTION: COMMANDS]
 
-### 💬 Full Command List
+💬 <b>MyGemini Zero v2 Command Reference</b>
 
---- *Core* ---
-*   `/start` - Restart the bot / unlock session
-*   `/logout` - Lock the session (requires password)
-*   `/profile` - View and edit your profile
-*   `/usage` - Token usage statistics
+All commands can be invoked from the Telegram <b>[Menu]</b> button or typed manually:
 
---- *Memory Management* ---
-*   `/dialogs` - Manage your dialogs (contexts)
-*   `/reset` - Clear the short-term dialog context
-*   `/history` - View message history
-*   `/memorize` - Memorize the content of a `.txt` or `.md` file
-*   `/archive` - Archive old memory in the current dialog
+<b>General:</b>
+• <code>/start</code> — Restart bot, greeting, and vault status check
+• <code>/profile</code> — «👤 Profile» (stats, user persona survey, subscription status)
+• <code>/settings</code> — «⚙️ Settings» (models, personas, styles, language, API key)
+• <code>/help</code> — Quick reference and interactive guide launcher
+• <code>/guide</code> — Interactive multi-topic user guide
+• <code>/logout</code> — Lock vault and purge session keys from RAM
 
---- *Settings & Help* ---
-*   `/settings` - Open the settings menu
-*   `/set_api_key` - Set or update your API key
-*   `/help` - Show a quick command reference
-*   `/help_guide` - 📖 Open this full guide
-*   `/apikey_info` - 🔑 How to create an API key
+<b>Dialogues & Memory:</b>
+• <code>/dialogs</code> — «🗂️ Dialogs» (switch conversations, delete old topics)
+• <code>/new_dialog</code> — «➕ New Dialog» with automatic topic titling from first prompt
+• <code>/rename [name]</code> — Manually rename active dialogue
+• <code>/documents</code> — «📄 Documents» in active dialogue memory (RAG)
+• <code>/history</code> — Interactive message calendar by date
+• <code>/reset</code> — «🔄 Reset Context» (clears short-term buffer)
+
+<b>Specialized Modes:</b>
+• <code>/translate</code> — Fast multi-language translator
+• <code>/feedback</code> — Send feedback or bug reports to developers
+• <code>/panic</code> — Panic password emergency wipe documentation
+• <code>/cancel</code> — Cancel active prompt or input state
 
 # [END OF SECTION: COMMANDS]

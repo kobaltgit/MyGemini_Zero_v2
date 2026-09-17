@@ -25,7 +25,8 @@ def get_guide_menu_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
         b_key = "🔑 API-ключ Gemini"
         b_rag = "📎 Векторная память (RAG)"
         b_models = "🤖 Выбор моделей"
-        b_sub = "💎 Подписка и оплата"
+        b_sub = "💎 Подписка и тарифы"
+        b_cmds = "💬 Список команд"
         b_close = "❌ Закрыть"
     else:
         b_zk = "🔐 Zero-Knowledge"
@@ -33,6 +34,7 @@ def get_guide_menu_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
         b_rag = "📎 Vector Memory (RAG)"
         b_models = "🤖 Models Selection"
         b_sub = "💎 Subscription"
+        b_cmds = "💬 Command List"
         b_close = "❌ Close"
 
     buttons = [
@@ -46,6 +48,7 @@ def get_guide_menu_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text=b_sub, callback_data="guide_sec:SUBSCRIPTION"),
+            InlineKeyboardButton(text=b_cmds, callback_data="guide_sec:COMMANDS"),
         ],
         [get_close_button(lang_code)],
     ]
@@ -146,7 +149,7 @@ async def handle_guide_section(callback: CallbackQuery):
         message=callback.message,
         text=section_text[:4000],
         reply_markup=kb,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
