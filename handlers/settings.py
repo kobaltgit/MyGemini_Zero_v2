@@ -24,7 +24,7 @@ from keyboards.inline import (
     get_close_button,
 )
 from keyboards.reply import get_main_reply_keyboard
-from core.config import settings, BOT_STYLES, BOT_PERSONAS
+from core.config import settings, BOT_STYLES, BOT_PERSONAS, MODELS_METADATA
 from middlewares.auth import session_manager
 from core.ui_helpers import safe_edit_message_text, safe_answer_callback
 from core.localization import get_text
@@ -203,7 +203,8 @@ async def handle_settings_panic(callback: CallbackQuery):
 @router.callback_query(F.data == "settings_models")
 async def handle_settings_models(callback: CallbackQuery):
     """
-    Fetches real-time models from Gemini API and marks search-capable models with 🌐.
+    Fetches real-time models from Gemini API or falls back to known models metadata,
+    and marks search-capable models with 🌐.
     """
     await safe_answer_callback(callback)
     user_id = callback.from_user.id
@@ -215,9 +216,28 @@ async def handle_settings_models(callback: CallbackQuery):
             user_repo = UserRepository(session)
             api_key = await user_repo.get_api_key(user_id, fernet)
 
-    key_to_use = api_key or settings.DEFAULT_GEMINI_KEY
-    gemini_svc = GeminiService(api_key=key_to_use)
-    models = await gemini_svc.get_available_models()
+    default_key = getattr(settings, "DEFAULT_GEMINI_KEY", None)
+    key_to_use = api_key or default_key
+
+    models = []
+    if key_to_use:
+        try:
+            gemini_svc = GeminiService(api_key=key_to_use)
+            models = await gemini_svc.get_available_models()
+        except Exception as e:
+            logger.warning(f"Failed to fetch models from API: {e}, falling back to metadata")
+
+    if not models:
+        for mid, meta in MODELS_METADATA.items():
+            supports_search = meta.get("supports_search", False)
+            badge = " 🌐" if supports_search else ""
+            models.append({
+                "id": mid,
+                "name": f"models/{mid}",
+                "display_name": f"{mid}{badge}",
+                "supports_search": supports_search,
+                "description": "",
+            })
 
     async with async_session_maker() as session:
         user_repo = UserRepository(session)

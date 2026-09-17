@@ -81,7 +81,19 @@ async def process_translation(message: Message, state: FSMContext):
             user_repo = UserRepository(session)
             api_key = await user_repo.get_api_key(user_id, fernet)
 
-    key_to_use = api_key or settings.DEFAULT_GEMINI_KEY
+    default_key = getattr(settings, "DEFAULT_GEMINI_KEY", None)
+    key_to_use = api_key or default_key
+    if not key_to_use:
+        await message.answer(
+            "🔒 <b>Сейф заблокирован или API-ключ не установлен.</b>\n"
+            "Для использования переводчика разблокируйте память мастер-паролем или укажите ключ в настройках."
+            if lang_code == "ru"
+            else "🔒 <b>Vault is locked or API key not set.</b>\nTo use translator, unlock vault or set key in settings.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]),
+            parse_mode="HTML",
+        )
+        return
+
     gemini_svc = GeminiService(api_key=key_to_use)
 
     status_msg = await message.answer("⏳ Перевод..." if lang_code == "ru" else "⏳ Translating...")

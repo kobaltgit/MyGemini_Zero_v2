@@ -17,6 +17,7 @@ from core.database import init_db, engine
 from handlers import register_all_routers
 from middlewares.auth import AuthMiddleware
 from middlewares.antispam import KeyLeakAndAntispamMiddleware
+from middlewares.logging import CallbackLoggingMiddleware
 
 logger = get_logger("bot_general")
 
@@ -79,6 +80,7 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     # Register Middlewares
+    dp.callback_query.outer_middleware(CallbackLoggingMiddleware())
     dp.message.middleware(KeyLeakAndAntispamMiddleware())
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())

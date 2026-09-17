@@ -27,6 +27,7 @@ from handlers.profile import render_profile_view
 from handlers.memory import render_documents_view
 from handlers.settings import render_settings_view
 from core.config import settings
+from core.ui_helpers import safe_answer_callback
 from core.logger import get_logger
 
 logger = get_logger("user_messages")
@@ -62,6 +63,10 @@ async def safe_send_menu(
             old_menu_id = data.get("_active_menu_msg_id")
             if old_menu_id and old_menu_id != message.message_id:
                 try:
+                    await message.bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=old_menu_id, reply_markup=None)
+                except Exception:
+                    pass
+                try:
                     await message.bot.delete_message(chat_id=message.chat.id, message_id=old_menu_id)
                 except Exception:
                     pass
@@ -78,18 +83,40 @@ async def safe_send_menu(
 
 
 @router.callback_query(F.data == "close_menu")
-async def handle_close_menu(callback: CallbackQuery, state: FSMContext):
-    """Universal handler for '❌ Закрыть' button. Instantly clears FSM and deletes the service menu message."""
-    try:
-        await callback.answer()
-    except Exception:
-        pass
+async def handle_close_menu(callback: CallbackQuery, state: FSMContext, lang_code: str = "ru"):
+    """Universal handler for '❌ Закрыть' button. Instantly clears FSM, strips buttons, and deletes the service menu message."""
+    toast_text = "Закрыто" if lang_code == "ru" else "Closed"
+    close_text = "✖️ <i>Меню закрыто.</i>" if lang_code == "ru" else "✖️ <i>Menu closed.</i>"
+
+    await safe_answer_callback(callback, text=toast_text, show_alert=False)
     if state:
         await state.clear()
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
+
+    if callback.message:
+        chat_id = callback.message.chat.id
+        msg_id = callback.message.message_id
+        bot = callback.bot
+
+        # Phase 1: Immediately edit message to remove all inline buttons and show "Menu closed".
+        # This guarantees instant visual feedback on mobile Telegram clients (no ghost buttons).
+        try:
+            await callback.message.edit_text(close_text, reply_markup=None, parse_mode="HTML")
+        except Exception:
+            try:
+                await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
+            except Exception:
+                pass
+
+        # Phase 2: Background clean deletion after a short delay (0.6s) so mobile animation is smooth.
+        async def _delete_later(delay: float = 0.6):
+            try:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
+
+        asyncio.create_task(_delete_later())
 
 
 @router.message(Command("profile", "account"))

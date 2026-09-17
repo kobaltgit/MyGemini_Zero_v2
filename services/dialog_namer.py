@@ -43,7 +43,7 @@ async def generate_dialog_title(first_message: str, api_key: Optional[str] = Non
     if not first_message or not first_message.strip():
         return "Новый диалог"
 
-    key = api_key or settings.DEFAULT_GEMINI_KEY
+    key = api_key or getattr(settings, "DEFAULT_GEMINI_KEY", None)
     if not key:
         return fallback_title_from_text(first_message)
 

@@ -8,7 +8,9 @@ from typing import Union
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 
-logger = logging.getLogger(__name__)
+from core.logger import get_logger
+
+logger = get_logger("user_messages")
 
 
 async def safe_edit_message_text(
@@ -33,6 +35,7 @@ async def safe_edit_message_text(
         err_msg = str(e).lower()
         if "message is not modified" in err_msg:
             # User clicked a button that produced the same text/markup - not an error
+            logger.info(f"Message {message.message_id} text not modified (identical content)")
             return True
         if "message to edit not found" in err_msg or "message can't be edited" in err_msg:
             logger.warning(f"Could not edit message {message.message_id}: {e}")
