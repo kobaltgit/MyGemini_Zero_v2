@@ -11,6 +11,7 @@ Supports bilingual rendering (RU / EN) and safe editing.
 from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
 
 from core.database import async_session_maker
 from database.repositories import UserRepository, ConversationRepository
@@ -92,18 +93,24 @@ async def render_documents_view(user_id: int) -> tuple[str, InlineKeyboardMarkup
 
 
 @router.callback_query(F.data == "menu_memory")
-async def handle_memory_menu(callback: CallbackQuery):
+async def handle_memory_menu(callback: CallbackQuery, state: FSMContext | None = None):
     """Displays memory & document overview for the active dialog."""
     await safe_answer_callback(callback)
+    if state:
+        await state.clear()
+        await state.update_data(_active_menu_msg_id=callback.message.message_id)
     user_id = callback.from_user.id
     text, keyboard = await render_documents_view(user_id)
     await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "memory_view_docs")
-async def handle_view_documents(callback: CallbackQuery):
+async def handle_view_documents(callback: CallbackQuery, state: FSMContext | None = None):
     """Refreshes documents list."""
     await safe_answer_callback(callback)
+    if state:
+        await state.clear()
+        await state.update_data(_active_menu_msg_id=callback.message.message_id)
     user_id = callback.from_user.id
     text, keyboard = await render_documents_view(user_id)
     await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")

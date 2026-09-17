@@ -15,7 +15,7 @@ async def safe_edit_message_text(
     message: Message,
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
-    parse_mode: str | None = "Markdown",
+    parse_mode: str | None = "HTML",
     disable_web_page_preview: bool = True
 ) -> Union[Message, bool]:
     """
@@ -37,6 +37,17 @@ async def safe_edit_message_text(
         if "message to edit not found" in err_msg or "message can't be edited" in err_msg:
             logger.warning(f"Could not edit message {message.message_id}: {e}")
             return False
+        if "can't parse entities" in err_msg:
+            logger.warning(f"Entity parse error in safe_edit_message_text, falling back to plain text: {e}")
+            try:
+                return await message.edit_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=None,
+                    disable_web_page_preview=disable_web_page_preview
+                )
+            except Exception:
+                pass
         raise e
     except Exception as e:
         logger.error(f"Unexpected error in safe_edit_message_text: {e}")

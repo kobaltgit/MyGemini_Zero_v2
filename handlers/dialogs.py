@@ -31,6 +31,7 @@ async def handle_dialog_list(callback: CallbackQuery, state: FSMContext | None =
     await safe_answer_callback(callback)
     if state:
         await state.clear()
+        await state.update_data(_active_menu_msg_id=callback.message.message_id)
     user_id = callback.from_user.id
 
     async with async_session_maker() as session:

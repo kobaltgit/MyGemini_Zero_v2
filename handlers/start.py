@@ -132,6 +132,7 @@ async def handle_back_to_main(callback: CallbackQuery, state: FSMContext):
     """Returns to the primary main menu safely, clearing any lingering FSM states."""
     await safe_answer_callback(callback)
     await state.clear()
+    await state.update_data(_active_menu_msg_id=callback.message.message_id)
     user_id = callback.from_user.id
     is_unlocked = session_manager.is_unlocked(user_id)
     is_admin = (user_id == settings.ADMIN_USER_ID)

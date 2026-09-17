@@ -56,6 +56,7 @@ async def safe_instant_delete(message: Message):
 @router.callback_query(F.data == "vault_lock")
 async def handle_vault_lock(callback: CallbackQuery):
     """Locks the vault immediately and purges keys from memory."""
+    await safe_answer_callback(callback)
     user_id = callback.from_user.id
     session_manager.lock_session(user_id)
 
@@ -87,7 +88,6 @@ async def handle_vault_lock(callback: CallbackQuery):
         )
     except Exception:
         pass
-    await safe_answer_callback(callback, "Сейф заблокирован" if lang_code == "ru" else "Vault locked")
 
 
 @router.callback_query(F.data == "vault_unlock_chat")
@@ -234,12 +234,12 @@ async def process_chat_password_setup(message: Message, state: FSMContext):
 
     confirm_prompt = (
         "🔐 <b>Подтверждение пароля (Шаг 2 из 2):</b>\n\n"
-        "Отлично! А теперь, для подтверждения, **введите этот же пароль ещё раз**.\n\n"
+        "Отлично! А теперь, для подтверждения, <b>введите этот же пароль ещё раз</b>.\n\n"
         "❗️ <i>ВАЖНО: Если вы забудете этот пароль, восстановить доступ к диалогам будет НЕВОЗМОЖНО. "
         "У нас нет функции сброса пароля!</i>"
         if lang_code == "ru"
         else "🔐 <b>Confirm Password (Step 2 of 2):</b>\n\n"
-        "Great! Now, for confirmation, **enter this same password once more**.\n\n"
+        "Great! Now, for confirmation, <b>enter this same password once more</b>.\n\n"
         "❗️ <i>IMPORTANT: If you forget this password, recovering your data is IMPOSSIBLE. "
         "There is no password reset feature!</i>"
     )
@@ -247,7 +247,7 @@ async def process_chat_password_setup(message: Message, state: FSMContext):
     await message.answer(
         confirm_prompt,
         reply_markup=get_cancel_keyboard(callback_data="close_menu", lang_code=lang_code),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -320,19 +320,19 @@ async def handle_panic_setup_start(callback: CallbackQuery, state: FSMContext):
 
     prompt = (
         "🚨 <b>Установка паник-пароля (Шаг 1 из 2):</b>\n\n"
-        "Придумайте и введите ваш **пароль паники** в чат.\n\n"
-        "⚠️ **Важно:** он *не должен* совпадать с вашим основным мастер-паролем."
+        "Придумайте и введите ваш <b>пароль паники</b> в чат.\n\n"
+        "⚠️ <b>Важно:</b> он <i>не должен</i> совпадать с вашим основным мастер-паролем."
         if lang_code == "ru"
         else "🚨 <b>Set Panic Password (Step 1 of 2):</b>\n\n"
-        "Enter your **panic password** in chat.\n\n"
-        "⚠️ **Important:** it *must not* match your master password."
+        "Enter your <b>panic password</b> in chat.\n\n"
+        "⚠️ <b>Important:</b> it <i>must not</i> match your master password."
     )
 
     await safe_edit_message_text(
         callback.message,
         prompt,
         reply_markup=get_cancel_keyboard(callback_data="menu_settings", lang_code=lang_code),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 

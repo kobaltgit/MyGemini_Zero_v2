@@ -5,8 +5,9 @@ and persistent Reply Keyboard button presses (supporting both Russian and Englis
 Enforces clean chat policy by instantly deleting user command messages (await message.delete()).
 """
 
+import asyncio
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 
@@ -32,12 +33,48 @@ logger = get_logger("user_messages")
 router = Router(name="commands")
 
 
-async def auto_delete_user_message(message: Message):
-    """Safely deletes user's command message to keep the chat history completely clean."""
-    try:
-        await message.delete()
-    except Exception:
-        pass
+def auto_delete_user_message(message: Message, delay: float = 0.5):
+    """Safely deletes user's command message in background after UI renders to prevent touch glitches on mobile."""
+    async def _del():
+        try:
+            if delay > 0:
+                await asyncio.sleep(delay)
+            await message.delete()
+        except Exception:
+            pass
+    asyncio.create_task(_del())
+
+
+async def safe_send_menu(
+    message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
+    state: FSMContext | None = None,
+    parse_mode: str = "HTML",
+) -> Message:
+    """
+    Sends a service menu. If a previous service menu was already open in chat,
+    it deletes the old one first so there is NEVER a duplicate or conflicting menu.
+    """
+    if state:
+        try:
+            data = await state.get_data()
+            old_menu_id = data.get("_active_menu_msg_id")
+            if old_menu_id and old_menu_id != message.message_id:
+                try:
+                    await message.bot.delete_message(chat_id=message.chat.id, message_id=old_menu_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    new_msg = await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    if state:
+        try:
+            await state.update_data(_active_menu_msg_id=new_msg.message_id)
+        except Exception:
+            pass
+    return new_msg
 
 
 @router.callback_query(F.data == "close_menu")
@@ -47,7 +84,8 @@ async def handle_close_menu(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
     except Exception:
         pass
-    await state.clear()
+    if state:
+        await state.clear()
     try:
         await callback.message.delete()
     except Exception:
@@ -56,29 +94,29 @@ async def handle_close_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.message(Command("profile", "account"))
 @router.message(F.text.in_(["👤 Личный кабинет", "👤 Profile"]))
-async def handle_profile_command(message: Message):
+async def handle_profile_command(message: Message, state: FSMContext | None = None):
     """Opens Personal Account card."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     text, keyboard = await render_profile_view(user_id)
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await safe_send_menu(message, text, keyboard, state=state)
 
 
 @router.message(Command("settings"))
 @router.message(F.text.in_(["⚙️ Настройки", "⚙️ Settings"]))
-async def handle_settings_command(message: Message):
+async def handle_settings_command(message: Message, state: FSMContext | None = None):
     """Opens Settings menu."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     text, keyboard = await render_settings_view(user_id)
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await safe_send_menu(message, text, keyboard, state=state)
 
 
 @router.message(Command("dialogs"))
 @router.message(F.text.in_(["🗂️ Диалоги", "🗂️ Dialogs"]))
-async def handle_dialogs_command(message: Message):
+async def handle_dialogs_command(message: Message, state: FSMContext | None = None):
     """Opens dialog selection menu."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
 
     async with async_session_maker() as session:
@@ -92,12 +130,14 @@ async def handle_dialogs_command(message: Message):
     if not dialogs:
         no_dlg_text = "У вас пока нет созданных диалогов." if lang_code == "ru" else "You don't have any dialogs yet."
         btn_new_text = "➕ Создать новый диалог" if lang_code == "ru" else "➕ Create New Dialog"
-        await message.answer(
+        await safe_send_menu(
+            message,
             no_dlg_text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=btn_new_text, callback_data="dialog_new")],
                 [get_close_button(lang_code)],
             ]),
+            state=state,
         )
         return
 
@@ -143,18 +183,19 @@ async def handle_dialogs_command(message: Message):
         "Click a dialogue name to switch to it:"
     )
 
-    await message.answer(
+    await safe_send_menu(
+        message,
         dlg_header,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="HTML",
+        InlineKeyboardMarkup(inline_keyboard=buttons),
+        state=state,
     )
 
 
 @router.message(Command("new_dialog"))
 @router.message(F.text.in_(["➕ Новый диалог", "➕ New Dialog"]))
-async def handle_new_dialog_command(message: Message):
+async def handle_new_dialog_command(message: Message, state: FSMContext | None = None):
     """Instantly creates a new dialog with auto-naming enabled."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
 
     async with async_session_maker() as session:
@@ -176,19 +217,20 @@ async def handle_new_dialog_command(message: Message):
     )
 
     btn_list = "🗂 Список диалогов" if lang_code == "ru" else "🗂 Dialogs List"
-    await message.answer(
+    await safe_send_menu(
+        message,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_list, callback_data="dialog_list"), get_close_button(lang_code)]
         ]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("rename"))
-async def handle_rename_command(message: Message, command: CommandObject):
+async def handle_rename_command(message: Message, command: CommandObject, state: FSMContext | None = None):
     """Renames the currently active dialog."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     new_name = command.args.strip() if command.args else ""
 
@@ -200,7 +242,12 @@ async def handle_rename_command(message: Message, command: CommandObject):
         lang_code = user.language_code if user and user.language_code else "ru"
 
         if not active_id:
-            await message.answer("⚠️ У вас нет активного диалога." if lang_code == "ru" else "⚠️ No active dialogue found.")
+            await safe_send_menu(
+                message,
+                "⚠️ У вас нет активного диалога." if lang_code == "ru" else "⚠️ No active dialogue found.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]),
+                state=state,
+            )
             return
 
         if not new_name:
@@ -209,7 +256,12 @@ async def handle_rename_command(message: Message, command: CommandObject):
                 if lang_code == "ru"
                 else "✏️ Specify new dialogue name with command:\n<code>/rename My new title</code>"
             )
-            await message.answer(prompt_text, parse_mode="HTML")
+            await safe_send_menu(
+                message,
+                prompt_text,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]),
+                state=state,
+            )
             return
 
         await dialog_repo.rename_dialog(active_id, new_name)
@@ -220,29 +272,30 @@ async def handle_rename_command(message: Message, command: CommandObject):
         else f"✅ Active dialogue renamed to: <b>{new_name}</b>"
     )
     btn_list = "🗂 Список диалогов" if lang_code == "ru" else "🗂 Dialogs List"
-    await message.answer(
+    await safe_send_menu(
+        message,
         confirm_text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_list, callback_data="dialog_list"), get_close_button(lang_code)]
         ]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("documents", "memory"))
 @router.message(F.text.in_(["📄 Документы", "📄 Documents"]))
-async def handle_documents_command(message: Message):
+async def handle_documents_command(message: Message, state: FSMContext | None = None):
     """Directly displays documents uploaded into active dialog memory."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     text, keyboard = await render_documents_view(user_id)
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await safe_send_menu(message, text, keyboard, state=state)
 
 
 @router.message(Command("memorize"))
-async def handle_memorize_command(message: Message):
+async def handle_memorize_command(message: Message, state: FSMContext | None = None):
     """Explains how to feed files to the bot's RAG memory."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
@@ -261,28 +314,29 @@ async def handle_memorize_command(message: Message):
     else:
         info = (
             "📎 <b>How to add documents to dialogue memory:</b>\n\n"
-            "1. Click the paperclip icon 📎 in Telegram.\n"
+            "1. Click the paperclip icon 📎 в Telegram.\n"
             "2. Choose a file (.pdf, .docx, .txt, .md, .py, .json) and send it as a <b>Document</b>.\n"
             "3. The bot indexes text chunks into ChromaDB for this dialogue.\n\n"
             "Ask any questions regarding file contents afterwards!"
         )
         btn_view = "📄 View uploaded files"
 
-    await message.answer(
+    await safe_send_menu(
+        message,
         info,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_view, callback_data="memory_view_docs")],
             [get_close_button(lang_code)],
         ]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("reset"))
 @router.message(F.text.in_(["🔄 Сброс контекста", "🔄 Reset Context"]))
-async def handle_reset_command(message: Message):
+async def handle_reset_command(message: Message, state: FSMContext | None = None):
     """Creates fresh dialog context for zeroed-out short term memory."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
 
     async with async_session_maker() as session:
@@ -301,20 +355,21 @@ async def handle_reset_command(message: Message):
         "Created fresh dialogue. Previous conversation remains in your dialogues list."
     )
     btn_list = "🗂 Список диалогов" if lang_code == "ru" else "🗂 Dialogs List"
-    await message.answer(
+    await safe_send_menu(
+        message,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_list, callback_data="dialog_list"), get_close_button(lang_code)]
         ]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("help"))
 @router.message(F.text.in_(["❓ Помощь", "❓ Help"]))
-async def handle_help_command(message: Message):
+async def handle_help_command(message: Message, state: FSMContext | None = None):
     """Renders comprehensive help guide."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
 
     async with async_session_maker() as session:
@@ -366,20 +421,21 @@ async def handle_help_command(message: Message):
         )
 
     btn_guide = "📚 Интерактивное руководство" if lang_code == "ru" else "📚 Interactive Guide"
-    await message.answer(
+    await safe_send_menu(
+        message,
         help_text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_guide, callback_data="open_guide")],
             [get_close_button(lang_code)],
         ]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("logout"))
-async def handle_logout_command(message: Message):
+async def handle_logout_command(message: Message, state: FSMContext | None = None):
     """Locks vault session."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     session_manager.lock_session(user_id)
 
@@ -398,17 +454,25 @@ async def handle_logout_command(message: Message):
         "Enter your master password to unlock:"
     )
 
-    await message.answer(
+    await safe_send_menu(
+        message,
         text,
-        reply_markup=get_locked_reply_keyboard(lang_code),
-        parse_mode="HTML",
+        reply_markup=get_unlock_keyboard(lang_code),
+        state=state,
     )
+    try:
+        await message.answer(
+            "🔐 Введите мастер-пароль:" if lang_code == "ru" else "🔐 Enter master password:",
+            reply_markup=get_locked_reply_keyboard(lang_code),
+        )
+    except Exception:
+        pass
 
 
 @router.message(Command("cancel"))
 async def handle_cancel_command(message: Message, state: FSMContext):
     """Cancels any active FSM state."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     await state.clear()
     user_id = message.from_user.id
     async with async_session_maker() as session:
@@ -417,17 +481,18 @@ async def handle_cancel_command(message: Message, state: FSMContext):
         lang_code = user.language_code if user and user.language_code else "ru"
 
     text = "✅ Действие отменено." if lang_code == "ru" else "✅ Action cancelled."
-    await message.answer(
+    await safe_send_menu(
+        message,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("panic"))
-async def handle_panic_command(message: Message):
+async def handle_panic_command(message: Message, state: FSMContext | None = None):
     """Shows panic-password configuration info."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
@@ -452,21 +517,22 @@ async def handle_panic_command(message: Message):
         )
         btn_sett = "⚙️ Go to Settings"
 
-    await message.answer(
+    await safe_send_menu(
+        message,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_sett, callback_data="settings_panic")],
             [get_close_button(lang_code)],
         ]),
-        parse_mode="HTML",
+        state=state,
     )
 
 
 @router.message(Command("admin"))
 @router.message(F.text.in_(["👑 Админка", "👑 Admin"]))
-async def handle_admin_command(message: Message):
+async def handle_admin_command(message: Message, state: FSMContext | None = None):
     """Opens admin dashboard for administrator."""
-    await auto_delete_user_message(message)
+    auto_delete_user_message(message)
     user_id = message.from_user.id
     if user_id != settings.ADMIN_USER_ID:
         return
@@ -477,8 +543,9 @@ async def handle_admin_command(message: Message):
         lang_code = user.language_code if user and user.language_code else "ru"
 
     title = "👑 <b>Панель администратора:</b>\n\nВыберите действие для управления ботом:" if lang_code == "ru" else "👑 <b>Admin Dashboard:</b>\n\nSelect action:"
-    await message.answer(
+    await safe_send_menu(
+        message,
         title,
-        reply_markup=get_admin_keyboard(lang_code=lang_code),
-        parse_mode="HTML",
+        get_admin_keyboard(lang_code=lang_code),
+        state=state,
     )

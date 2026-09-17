@@ -121,6 +121,7 @@ async def handle_profile_menu_callback(callback: CallbackQuery, state: FSMContex
     await safe_answer_callback(callback)
     if state:
         await state.clear()
+        await state.update_data(_active_menu_msg_id=callback.message.message_id)
     user_id = callback.from_user.id
     text, keyboard = await render_profile_view(user_id)
     await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")

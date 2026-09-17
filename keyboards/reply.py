@@ -63,7 +63,7 @@ def get_main_reply_keyboard(is_admin: bool = False, lang_code: str = "ru") -> Re
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
         resize_keyboard=True,
-        is_persistent=True,
+        is_persistent=False,
         input_field_placeholder=placeholder,
     )
 
@@ -88,6 +88,6 @@ def get_locked_reply_keyboard(lang_code: str = "ru") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=buttons,
         resize_keyboard=True,
-        is_persistent=True,
+        is_persistent=False,
         input_field_placeholder=placeholder,
     )

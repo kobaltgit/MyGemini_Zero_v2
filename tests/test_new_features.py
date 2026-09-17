@@ -113,9 +113,9 @@ class TestNewFeatures(unittest.TestCase):
         self.assertEqual(marker_last, "⚪")
 
     def test_reply_keyboard_structure(self):
-        """Verifies that ReplyKeyboardMarkup has required buttons and persistence."""
+        """Verifies that ReplyKeyboardMarkup has required buttons and is collapsible."""
         kb = get_main_reply_keyboard(is_admin=True)
-        self.assertTrue(kb.is_persistent)
+        self.assertFalse(kb.is_persistent)
         self.assertTrue(kb.resize_keyboard)
 
         button_texts = [btn.text for row in kb.keyboard for btn in row]

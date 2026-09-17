@@ -166,8 +166,21 @@
   1. Синтаксис фильтров исправлен на объединение команд внутри одного объекта: `Command("guide", "help_guide")`, `Command("feedback", "support")`, `Command("profile", "account")`, `Command("documents", "memory")`.
   2. В `handlers/chat.py` добавлен предохранитель от отправки нераспознанных слэш-команд в Gemini API.
 * **Верификация (Тестирование):**
-  - Добавлен юнит-тест `TestCommandFilters.test_multi_command_filter` в `tests/test_fixes_and_i18n.py`. Все тесты пройдены.
-
+### [FIX-BUG-021] Исправление: Зависание инлайн-кнопок на мобильных клиентах Telegram и нескрываемая клавиатура
+* **Дата закрытия:** 2026-09-17
+* **Затронутые файлы:** `keyboards/reply.py`, `core/ui_helpers.py`, `handlers/commands.py`, `handlers/auth.py`, `handlers/settings.py`, `handlers/profile.py`, `handlers/dialogs.py`, `handlers/memory.py`, `handlers/start.py`, `tests/test_new_features.py`
+* **Первопричина (RCA):**
+  1. Синхронное удаление сообщения пользователя `await message.delete()` прямо перед `message.answer()` в мобильном клиенте Telegram вызывало рассинхронизацию сенсорных хитбоксов RecyclerView во время закрытия анимации клавиатуры (клики по новым инлайн-кнопкам не регистрировались до ручного скролла чата).
+  2. Параметр `is_persistent=True` в ReplyKeyboardMarkup жестко фиксировал панель в мобильном интерфейсе, отнимая половину экрана и лишая пользователя кнопки скрытия.
+  3. Отсутствие контроля единственного сервисного меню приводило к накоплению дубликатов в истории чата.
+  4. В ряде хэндлеров передавался `parse_mode="Markdown"` при наличии HTML-тегов (`<b>`, `<i>`), что вызывало ошибки парсинга сущностей.
+* **Применённое решение:**
+  1. В `keyboards/reply.py` установлено `is_persistent=False` для всех постоянных клавиатур: на смартфонах появилась стандартная кнопка сворачивания/разворачивания клавиатуры.
+  2. Реализована функция фонового удаления `auto_delete_user_message` с небольшой задержкой (0.5 сек), устраняющая сенсорный глитч мобильного клиента Telegram.
+  3. Внедрена функция `safe_send_menu`, гарантирующая чистоту чата: при вызове нового сервисного меню старое автоматически удаляется (`_active_menu_msg_id`).
+  4. В `core/ui_helpers.py` внедрён fallback на plain text при ошибках `can't parse entities`, а в `handlers/auth.py` исправлены разметки на `HTML`.
+* **Верификация (Тестирование):**
+  - Обновлён тест `test_reply_keyboard_structure` в `tests/test_new_features.py`.
 
 ### Шаблон карточки исправления:
 
