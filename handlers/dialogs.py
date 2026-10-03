@@ -6,6 +6,7 @@ Displays 📎 icon for dialogs with attached documents and includes ❌ Закр
 Supports full bilingualism (RU / EN), FSM state clearing and safe editing.
 """
 
+from typing import Optional
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
@@ -269,38 +270,25 @@ async def handle_dialog_delete(callback: CallbackQuery):
     await handle_dialog_list(callback)
 
 
-@router.callback_query(F.data.startswith("dialog_export:"))
-async def handle_dialog_export(callback: CallbackQuery):
-    """Exports dialog message history as a clean GitHub-flavored Markdown document."""
-    user_id = callback.from_user.id
-    try:
-        dialog_id = int(callback.data.split(":")[1])
-    except (IndexError, ValueError):
-        await safe_answer_callback(callback, "Неверный ID диалога / Invalid dialogue ID", show_alert=True)
-        return
-
-    fernet = session_manager.get_fernet(user_id)
+async def export_and_send_dialog_md(
+    dialog_id: int,
+    user_id: int,
+    fernet,
+    target_message: Message,
+    lang_code: str = "ru",
+    callback: Optional[CallbackQuery] = None,
+) -> bool:
+    """Exports dialog message history as a clean GitHub-flavored Markdown document and sends to chat."""
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(user_id)
-        lang_code = user.language_code if user and user.language_code else "ru"
-
-    if not fernet:
-        locked_text = (
-            "🔒 Память заблокирована. Пожалуйста, разблокируйте сейф мастер-паролем, чтобы экспортировать диалог."
-            if lang_code == "ru"
-            else "🔒 Vault is locked. Please unlock with master password to export dialogue."
-        )
-        await safe_answer_callback(callback, locked_text, show_alert=True)
-        return
-
-    async with async_session_maker() as session:
         dialog_repo = DialogRepository(session)
         dialog = await dialog_repo.get_by_id(dialog_id)
         if not dialog or dialog.user_id != user_id:
-            not_found = "Диалог не найден." if lang_code == "ru" else "Dialogue not found."
-            await safe_answer_callback(callback, not_found, show_alert=True)
-            return
+            if callback:
+                not_found = "Диалог не найден." if lang_code == "ru" else "Dialogue not found."
+                await safe_answer_callback(callback, not_found, show_alert=True)
+            return False
 
         conv_repo = ConversationRepository(session)
         messages = await conv_repo.get_dialog_messages(dialog_id, fernet, limit=None)
@@ -357,15 +345,54 @@ async def handle_dialog_export(callback: CallbackQuery):
         else f"📥 Export of dialogue: <b>{dialog.name}</b>"
     )
 
-    await safe_answer_callback(callback, "Подготовка файла экспорта..." if lang_code == "ru" else "Preparing export file...")
+    if callback:
+        await safe_answer_callback(callback, "Подготовка файла экспорта..." if lang_code == "ru" else "Preparing export file...")
     try:
-        await callback.message.answer_document(
+        await target_message.answer_document(
             document=doc,
             caption=caption,
             parse_mode="HTML",
         )
+        return True
     except Exception as e:
         logger.error(f"Failed to send export document: {e}")
-        err_msg = "Ошибка отправки файла" if lang_code == "ru" else "Failed to send file"
-        await safe_answer_callback(callback, err_msg, show_alert=True)
+        if callback:
+            err_msg = "Ошибка отправки файла" if lang_code == "ru" else "Failed to send file"
+            await safe_answer_callback(callback, err_msg, show_alert=True)
+        return False
+
+
+@router.callback_query(F.data.startswith("dialog_export:"))
+async def handle_dialog_export(callback: CallbackQuery):
+    """Exports dialog message history as a clean GitHub-flavored Markdown document."""
+    user_id = callback.from_user.id
+    try:
+        dialog_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await safe_answer_callback(callback, "Неверный ID диалога / Invalid dialogue ID", show_alert=True)
+        return
+
+    fernet = session_manager.get_fernet(user_id)
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if not fernet:
+        locked_text = (
+            "🔒 Память заблокирована. Пожалуйста, разблокируйте сейф мастер-паролем, чтобы экспортировать диалог."
+            if lang_code == "ru"
+            else "🔒 Vault is locked. Please unlock with master password to export dialogue."
+        )
+        await safe_answer_callback(callback, locked_text, show_alert=True)
+        return
+
+    await export_and_send_dialog_md(
+        dialog_id=dialog_id,
+        user_id=user_id,
+        fernet=fernet,
+        target_message=callback.message,
+        lang_code=lang_code,
+        callback=callback,
+    )
 

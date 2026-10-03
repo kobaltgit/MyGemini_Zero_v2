@@ -263,10 +263,12 @@
   - [x] Поддержка `stop_keyboard` и `quick_actions_keyboard` в `MessageStreamThrottler` (`services/throttler.py`)
   - [x] Кнопка `[⏹️ Стоп]` (`chat_action:stop`) во время стриминга с прерыванием генерации
   - [x] Кнопки `[🔄 Еще раз]` (`chat_action:regen`) и `[↩️ Откатить шаг]` (`chat_action:undo`) под завершенным сообщением
+  - [x] Кнопка прямого экспорта `[📥 Экспорт диалога]` (`chat_action:export`) под завершенным ответом в чате
 - [x] Экспорт диалога в Markdown (`.md`):
   - [x] Кнопка `📥 Экспорт в Markdown` в меню управления диалогом (`keyboards/inline.py`)
-  - [x] Хэндлер `dialog_export:<id>` в `handlers/dialogs.py` с дешифровкой на лету в RAM и отправкой через `BufferedInputFile`
+  - [x] Кнопка `📥 Экспорт диалога` прямо в блоке быстрых действий под сообщениями чата
+  - [x] Хэндлеры `dialog_export:<id>` и `chat_action:export` с дешифровкой на лету в RAM и отправкой через `BufferedInputFile`
 - [x] Комплексное тестирование:
-  - [x] 11 новых тестов в `tests/test_ui_phase1.py`
+  - [x] 12 новых тестов в `tests/test_ui_phase1.py`
   - [x] Обновление существующих тестов под сигнатуры методов
-  - [x] Успешное прохождение всех 106 тестов (106/106 pass)
+  - [x] Успешное прохождение всех 107 тестов (107/107 pass)

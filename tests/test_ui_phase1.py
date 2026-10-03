@@ -27,6 +27,7 @@ from handlers.chat import (
     handle_chat_action_stop,
     handle_chat_action_undo,
     handle_chat_action_regen,
+    handle_chat_action_export,
     active_streams,
 )
 from middlewares.auth import session_manager
@@ -39,14 +40,16 @@ class TestKeyboardsPhase1(unittest.TestCase):
         kb_ru = get_chat_quick_actions_keyboard("ru")
         callbacks = [btn.callback_data for row in kb_ru.inline_keyboard for btn in row]
         texts = [btn.text for row in kb_ru.inline_keyboard for btn in row]
-        self.assertEqual(callbacks, ["chat_action:regen", "chat_action:undo"])
+        self.assertEqual(callbacks, ["chat_action:regen", "chat_action:undo", "chat_action:export"])
         self.assertIn("🔄 Еще раз", texts)
         self.assertIn("↩️ Откатить шаг", texts)
+        self.assertIn("📥 Экспорт диалога", texts)
 
         kb_en = get_chat_quick_actions_keyboard("en")
         texts_en = [btn.text for row in kb_en.inline_keyboard for btn in row]
         self.assertIn("🔄 Regenerate", texts_en)
         self.assertIn("↩️ Undo turn", texts_en)
+        self.assertIn("📥 Export Dialogue", texts_en)
 
     def test_streaming_stop_keyboard(self):
         """Verifies streaming stop button keyboard in RU and EN."""
@@ -340,3 +343,35 @@ class TestHandlersPhase1(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(msgs), 2)
             self.assertEqual(msgs[0]["text"], "User question for regen")
             self.assertEqual(msgs[1]["text"], "Regenerated answer content.")
+
+    async def test_chat_action_export(self):
+        """Verifies export button from chat quick actions sends markdown document."""
+        async with async_session_maker() as session:
+            dlg_repo = DialogRepository(session)
+            dlg = await dlg_repo.create_dialog(self.user_id, "Export From Chat", set_active=True)
+            conv_repo = ConversationRepository(session)
+            await conv_repo.add_message(
+                user_id=self.user_id,
+                dialog_id=dlg.dialog_id,
+                role="user",
+                message_text="Hello to export",
+                fernet_instance=self.fernet,
+            )
+
+        cb_msg = MagicMock(spec=Message)
+        cb_msg.answer_document = AsyncMock()
+        cb = MagicMock(spec=CallbackQuery)
+        cb.from_user = TgUser(id=self.user_id, is_bot=False, first_name="UI", language_code="ru")
+        cb.message = cb_msg
+        cb.answer = AsyncMock()
+        cb.data = "chat_action:export"
+
+        await handle_chat_action_export(cb)
+
+        cb_msg.answer_document.assert_awaited_once()
+        args, kwargs = cb_msg.answer_document.call_args
+        doc = kwargs.get("document")
+        self.assertIsInstance(doc, BufferedInputFile)
+        self.assertTrue(doc.filename.startswith("dialog_"))
+        self.assertTrue(doc.filename.endswith(".md"))
+

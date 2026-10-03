@@ -96,11 +96,15 @@ def get_chat_quick_actions_keyboard(lang_code: str = "ru") -> InlineKeyboardMark
     """Builds quick action buttons attached to completed assistant response."""
     regen_text = "🔄 Еще раз" if lang_code == "ru" else "🔄 Regenerate"
     undo_text = "↩️ Откатить шаг" if lang_code == "ru" else "↩️ Undo turn"
+    export_text = "📥 Экспорт диалога" if lang_code == "ru" else "📥 Export Dialogue"
     buttons = [
         [
             InlineKeyboardButton(text=regen_text, callback_data="chat_action:regen"),
             InlineKeyboardButton(text=undo_text, callback_data="chat_action:undo"),
-        ]
+        ],
+        [
+            InlineKeyboardButton(text=export_text, callback_data="chat_action:export"),
+        ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

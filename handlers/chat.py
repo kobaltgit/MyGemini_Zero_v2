@@ -30,6 +30,7 @@ from keyboards.inline import (
     get_chat_quick_actions_keyboard,
     get_streaming_stop_keyboard,
 )
+from handlers.dialogs import export_and_send_dialog_md
 from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from core.config import settings, BOT_STYLES, BOT_PERSONAS, SUBSCRIPTION_PLANS
 from core.ui_helpers import safe_edit_message_text, safe_answer_callback
@@ -833,4 +834,41 @@ async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
                 message_text=full_reply_text,
                 fernet_instance=fernet,
             )
+
+
+@router.callback_query(F.data == "chat_action:export")
+async def handle_chat_action_export(callback: CallbackQuery):
+    """Exports the currently active dialog to Markdown directly from chat quick actions."""
+    user_id = callback.from_user.id
+    fernet = session_manager.get_fernet(user_id)
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        active_dialog_id = user.active_dialog_id if user else None
+
+    if not fernet:
+        locked_text = (
+            "🔒 Память заблокирована. Пожалуйста, разблокируйте сейф мастер-паролем, чтобы экспортировать диалог."
+            if lang_code == "ru"
+            else "🔒 Vault is locked. Please unlock with master password to export dialogue."
+        )
+        await safe_answer_callback(callback, locked_text, show_alert=True)
+        return
+
+    if not active_dialog_id:
+        not_found = "Активный диалог не найден." if lang_code == "ru" else "No active dialogue found."
+        await safe_answer_callback(callback, not_found, show_alert=True)
+        return
+
+    await export_and_send_dialog_md(
+        dialog_id=active_dialog_id,
+        user_id=user_id,
+        fernet=fernet,
+        target_message=callback.message,
+        lang_code=lang_code,
+        callback=callback,
+    )
+
 
