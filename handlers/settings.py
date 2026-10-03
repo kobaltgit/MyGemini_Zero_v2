@@ -16,6 +16,7 @@ from services.gemini import GeminiService
 from keyboards.inline import (
     get_settings_keyboard,
     get_thinking_budget_keyboard,
+    get_session_ttl_keyboard,
     get_models_keyboard,
     get_styles_keyboard,
     get_personas_keyboard,
@@ -54,6 +55,10 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     cur_budget = getattr(user, "thinking_budget", 1024)
     if cur_budget is None:
         cur_budget = 1024
+    cur_ttl = getattr(user, "session_ttl_minutes", 60)
+    if cur_ttl is None:
+        cur_ttl = 60
+    code_exec = bool(getattr(user, "enable_code_execution", False))
 
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
@@ -73,12 +78,25 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         else:
             thinking_str = "⚖️ Баланс (1024)"
 
+        if cur_ttl == 15:
+            ttl_str = "⏱️ 15 минут"
+        elif cur_ttl == 480:
+            ttl_str = "💼 8 часов"
+        elif cur_ttl == 1440:
+            ttl_str = "🌙 24 часа"
+        else:
+            ttl_str = "🕐 1 час"
+
+        code_str = "🟢 Включена" if code_exec else "🔴 Выключена"
+
         text = (
             "⚙️ <b>Настройки AI-ассистента:</b>\n\n"
             f"• <b>Модель:</b> <code>{cur_model}</code>\n"
             f"• <b>Персона:</b> {cur_persona}\n"
             f"• <b>Стиль:</b> {cur_style}\n"
             f"• <b>Размышления:</b> {thinking_str}\n"
+            f"• <b>Песочница Python:</b> {code_str}\n"
+            f"• <b>Таймаут сессии:</b> {ttl_str}\n"
             f"• <b>Формат:</b> {fmt_str}\n"
             f"• <b>Шапка:</b> {hdr_str}\n"
             f"• <b>Язык:</b> {lang_str}\n"
@@ -103,12 +121,25 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         else:
             thinking_str = "⚖️ Balanced (1024)"
 
+        if cur_ttl == 15:
+            ttl_str = "⏱️ 15 mins"
+        elif cur_ttl == 480:
+            ttl_str = "💼 8 hours"
+        elif cur_ttl == 1440:
+            ttl_str = "🌙 24 hours"
+        else:
+            ttl_str = "🕐 1 hour"
+
+        code_str = "🟢 Enabled" if code_exec else "🔴 Disabled"
+
         text = (
             "⚙️ <b>AI Assistant Settings:</b>\n\n"
             f"• <b>Model:</b> <code>{cur_model}</code>\n"
             f"• <b>Persona:</b> {cur_persona}\n"
             f"• <b>Style:</b> {cur_style}\n"
             f"• <b>Thinking Budget:</b> {thinking_str}\n"
+            f"• <b>Python Sandbox:</b> {code_str}\n"
+            f"• <b>Session Timeout:</b> {ttl_str}\n"
             f"• <b>Format:</b> {fmt_str}\n"
             f"• <b>Header:</b> {hdr_str}\n"
             f"• <b>Language:</b> {lang_str}\n"
@@ -125,6 +156,8 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         current_format=cur_format,
         current_header_style=cur_header,
         current_thinking_budget=cur_budget,
+        current_session_ttl=cur_ttl,
+        code_execution_enabled=code_exec,
     )
     return text, keyboard
 
@@ -381,6 +414,74 @@ async def handle_set_thinking(callback: CallbackQuery):
         ans_text = f"Thinking budget set to {val} tokens" if val > 0 else "Thinking disabled (0)"
 
     await safe_answer_callback(callback, text=ans_text)
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_ttl")
+async def handle_settings_ttl(callback: CallbackQuery):
+    """Renders session TTL (inactivity timeout) configuration keyboard."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_ttl = getattr(user, "session_ttl_minutes", 60) if user else 60
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    text = (
+        "⏱️ <b>Время жизни сессии (Inactivity Timeout):</b>\n\n"
+        "Выберите время бездействия, через которое незашифрованный ключ в оперативной памяти "
+        "автоматически стирается (Zero-Knowledge безопасность):"
+        if lang_code == "ru"
+        else "⏱️ <b>Session Lifetime (Inactivity Timeout):</b>\n\n"
+        "Select inactivity period after which ephemeral decryption key in RAM "
+        "will be automatically cleared (Zero-Knowledge security):"
+    )
+    kb = get_session_ttl_keyboard(current_ttl=cur_ttl or 60, lang_code=lang_code)
+    await safe_edit_message_text(callback.message, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("set_ttl:"))
+async def handle_set_ttl(callback: CallbackQuery):
+    """Updates user session TTL and refreshes settings view."""
+    ttl_str = callback.data.split(":")[1]
+    try:
+        ttl_val = int(ttl_str)
+    except ValueError:
+        ttl_val = 60
+
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_session_ttl(user_id, ttl_val)
+
+    ans_text = (
+        f"⏱️ Таймаут сессии: {ttl_val} мин."
+        if (callback.from_user.language_code or "").startswith("ru")
+        else f"⏱️ Session timeout: {ttl_val} mins."
+    )
+    await safe_answer_callback(callback, ans_text)
+
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_toggle_code_exec")
+async def handle_toggle_code_exec(callback: CallbackQuery):
+    """Toggles Python code execution sandbox state and refreshes settings view."""
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        new_state = await user_repo.toggle_code_execution(user_id)
+
+    if (callback.from_user.language_code or "").startswith("ru"):
+        ans_text = "🐍 Песочница Python включена" if new_state else "🐍 Песочница Python выключена"
+    else:
+        ans_text = "🐍 Python Sandbox enabled" if new_state else "🐍 Python Sandbox disabled"
+
+    await safe_answer_callback(callback, ans_text)
+
     text, keyboard = await render_settings_view(user_id)
     await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
 

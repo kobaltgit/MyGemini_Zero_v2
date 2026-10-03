@@ -46,26 +46,40 @@ class SessionManager:
         if user_id in self._active_sessions:
             self._last_activity[user_id] = time.monotonic()
 
-    def get_fernet(self, user_id: int) -> Optional[Fernet]:
+    def is_session_active(self, user_id: int, ttl_minutes: Optional[int] = None) -> bool:
         """
-        Retrieves active cipher if within timeout window; otherwise locks and returns None.
+        Checks if the session is currently active and within the dynamic or default TTL window.
+        If expired, automatically locks the session.
         """
         if user_id not in self._active_sessions:
-            return None
+            return False
 
         last_active = self._last_activity.get(user_id, 0)
         elapsed = time.monotonic() - last_active
+        timeout_seconds = (ttl_minutes * 60) if ttl_minutes is not None else settings.SESSION_TIMEOUT_SECONDS
 
-        if elapsed > settings.SESSION_TIMEOUT_SECONDS:
-            logger.info(f"Session timed out for user {user_id} ({elapsed:.0f}s). Locking vault.", extra={"user_id": user_id})
+        if elapsed > timeout_seconds:
+            logger.info(
+                f"Session timed out for user {user_id} ({elapsed:.0f}s > {timeout_seconds:.0f}s). Locking vault.",
+                extra={"user_id": user_id},
+            )
             self.lock_session(user_id)
+            return False
+
+        return True
+
+    def get_fernet(self, user_id: int, ttl_minutes: Optional[int] = None) -> Optional[Fernet]:
+        """
+        Retrieves active cipher if within timeout window; otherwise locks and returns None.
+        """
+        if not self.is_session_active(user_id, ttl_minutes=ttl_minutes):
             return None
 
         self.touch_session(user_id)
         return self._active_sessions.get(user_id)
 
-    def is_unlocked(self, user_id: int) -> bool:
-        return self.get_fernet(user_id) is not None
+    def is_unlocked(self, user_id: int, ttl_minutes: Optional[int] = None) -> bool:
+        return self.get_fernet(user_id, ttl_minutes=ttl_minutes) is not None
 
 
 # Global session manager instance
@@ -131,7 +145,13 @@ class AuthMiddleware(BaseMiddleware):
                 return
 
             # Inject session & repositories into handler data
-            fernet = session_manager.get_fernet(user_id)
+            user_ttl = (
+                user.session_ttl_minutes
+                if user and hasattr(user, "session_ttl_minutes") and user.session_ttl_minutes is not None
+                else 60
+            )
+            session_manager.is_session_active(user_id, ttl_minutes=user_ttl)
+            fernet = session_manager.get_fernet(user_id, ttl_minutes=user_ttl)
             data["fernet"] = fernet
             data["session_manager"] = session_manager
             data["db_user"] = user

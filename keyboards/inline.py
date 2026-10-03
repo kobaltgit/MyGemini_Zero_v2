@@ -127,6 +127,8 @@ def get_settings_keyboard(
     current_format: str = "rich",
     current_header_style: str = "blockquote",
     current_thinking_budget: int = 1024,
+    current_session_ttl: int = 60,
+    code_execution_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """Builds settings menu keyboard."""
     if lang_code == "ru":
@@ -143,6 +145,20 @@ def get_settings_keyboard(
             thinking_label = "🧠 Размышления: 🔬 Глубокий"
         else:
             thinking_label = "🧠 Размышления: ⚖️ Баланс"
+
+        if current_session_ttl == 15:
+            ttl_val = "15 мин"
+        elif current_session_ttl == 480:
+            ttl_val = "8 ч"
+        elif current_session_ttl == 1440:
+            ttl_val = "24 ч"
+        else:
+            ttl_val = "1 час"
+        ttl_label = f"⏱️ Сессия: {ttl_val}"
+
+        code_exec_status = "🟢 Вкл" if code_execution_enabled else "🔴 Выкл"
+        code_exec_label = f"🐍 Песочница Python: {code_exec_status}"
+
         format_label = "⚡ Формат: Rich (10.1+)" if current_format == "rich" else "📝 Формат: Классический"
         if current_header_style == "expandable":
             header_label = "📌 Шапка: 🔽 Под спойлером"
@@ -166,6 +182,20 @@ def get_settings_keyboard(
             thinking_label = "🧠 Thinking: 🔬 Deep"
         else:
             thinking_label = "🧠 Thinking: ⚖️ Balanced"
+
+        if current_session_ttl == 15:
+            ttl_val = "15 mins"
+        elif current_session_ttl == 480:
+            ttl_val = "8 hours"
+        elif current_session_ttl == 1440:
+            ttl_val = "24 hours"
+        else:
+            ttl_val = "1 hour"
+        ttl_label = f"⏱️ Session: {ttl_val}"
+
+        code_exec_status = "🟢 On" if code_execution_enabled else "🔴 Off"
+        code_exec_label = f"🐍 Python Sandbox: {code_exec_status}"
+
         format_label = "⚡ Format: Rich (10.1+)" if current_format == "rich" else "📝 Format: Classic (Markdown)"
         if current_header_style == "expandable":
             header_label = "📌 Header: 🔽 Under spoiler"
@@ -181,12 +211,37 @@ def get_settings_keyboard(
         [InlineKeyboardButton(text=persona_label, callback_data="settings_personas")],
         [InlineKeyboardButton(text=style_label, callback_data="settings_styles")],
         [InlineKeyboardButton(text=thinking_label, callback_data="settings_thinking")],
+        [InlineKeyboardButton(text=code_exec_label, callback_data="settings_toggle_code_exec")],
+        [InlineKeyboardButton(text=ttl_label, callback_data="settings_ttl")],
         [InlineKeyboardButton(text=format_label, callback_data="settings_format")],
         [InlineKeyboardButton(text=header_label, callback_data="settings_header")],
         [InlineKeyboardButton(text=key_label, callback_data="settings_api_key")],
         [InlineKeyboardButton(text=lang_label, callback_data="settings_language")],
         [InlineKeyboardButton(text=panic_label, callback_data="settings_panic")],
         [InlineKeyboardButton(text=back_label, callback_data="back_to_main"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_session_ttl_keyboard(current_ttl: int = 60, lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds session TTL (inactivity timeout) selector keyboard."""
+    c15 = "✅ " if current_ttl == 15 else ""
+    c60 = "✅ " if current_ttl == 60 else ""
+    c480 = "✅ " if current_ttl == 480 else ""
+    c1440 = "✅ " if current_ttl == 1440 else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    t15 = f"{c15}⏱️ 15 минут" if lang_code == "ru" else f"{c15}⏱️ 15 mins"
+    t60 = f"{c60}🕐 1 час" if lang_code == "ru" else f"{c60}🕐 1 hour"
+    t480 = f"{c480}💼 8 часов" if lang_code == "ru" else f"{c480}💼 8 hours"
+    t1440 = f"{c1440}🌙 24 часа" if lang_code == "ru" else f"{c1440}🌙 24 hours"
+
+    buttons = [
+        [InlineKeyboardButton(text=t15, callback_data="set_ttl:15")],
+        [InlineKeyboardButton(text=t60, callback_data="set_ttl:60")],
+        [InlineKeyboardButton(text=t480, callback_data="set_ttl:480")],
+        [InlineKeyboardButton(text=t1440, callback_data="set_ttl:1440")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

@@ -104,6 +104,8 @@ async def _migrate_missing_columns(db_engine=None) -> None:
             "message_format": "TEXT DEFAULT 'rich' NOT NULL",
             "header_style": "TEXT DEFAULT 'blockquote' NOT NULL",
             "thinking_budget": "INTEGER DEFAULT 1024 NOT NULL",
+            "session_ttl_minutes": "INTEGER DEFAULT 60 NOT NULL",
+            "enable_code_execution": "BOOLEAN DEFAULT 0 NOT NULL",
         }
 
         for col, col_def in user_column_specs.items():

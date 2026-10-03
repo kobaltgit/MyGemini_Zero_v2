@@ -472,12 +472,22 @@ async def handle_user_message(message: Message, bot: Bot):
             contents=gemini_contents,
             system_instruction=system_instruction,
             enable_search=True,
+            enable_code_execution=getattr(user, "enable_code_execution", False),
             thinking_budget=thinking_budget,
         )
         async for chunk in stream:
             if throttler.is_aborted:
                 break
+            throttler.update_usage_from_chunk(chunk)
             await throttler.handle_chunk(chunk)
+
+        if hasattr(gemini_service, "last_usage_metadata") and isinstance(gemini_service.last_usage_metadata, dict):
+            meta = gemini_service.last_usage_metadata
+            throttler.set_usage_metadata(
+                meta.get("prompt_tokens", 0),
+                meta.get("candidates_tokens", 0),
+                meta.get("total_tokens", 0),
+            )
 
         full_reply_text = await throttler.finalize()
 
@@ -799,12 +809,22 @@ async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
             contents=gemini_contents,
             system_instruction=system_instruction,
             enable_search=True,
+            enable_code_execution=getattr(user, "enable_code_execution", False),
             thinking_budget=thinking_budget,
         )
         async for chunk in stream:
             if throttler.is_aborted:
                 break
+            throttler.update_usage_from_chunk(chunk)
             await throttler.handle_chunk(chunk)
+
+        if hasattr(gemini_service, "last_usage_metadata") and isinstance(gemini_service.last_usage_metadata, dict):
+            meta = gemini_service.last_usage_metadata
+            throttler.set_usage_metadata(
+                meta.get("prompt_tokens", 0),
+                meta.get("candidates_tokens", 0),
+                meta.get("total_tokens", 0),
+            )
 
         full_reply_text = await throttler.finalize()
     except Exception as e:

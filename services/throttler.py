@@ -15,7 +15,7 @@ Supports:
 import time
 import asyncio
 import re
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 from aiohttp import ClientError
 from aiogram import Bot
 from aiogram.types import Message, InputRichMessage, InlineKeyboardMarkup
@@ -79,6 +79,12 @@ class MessageStreamThrottler:
         self.quick_actions_keyboard = quick_actions_keyboard
         self.is_aborted: bool = False
 
+        self.start_time: float = time.monotonic()
+        self.elapsed_time: Optional[float] = None
+        self.prompt_tokens: Optional[int] = None
+        self.candidates_tokens: Optional[int] = None
+        self.total_tokens: Optional[int] = None
+
         if throttle_interval is not None:
             self.throttle_interval = throttle_interval
         elif self.message_format == "rich":
@@ -91,6 +97,48 @@ class MessageStreamThrottler:
         self.last_update_time: float = 0.0
         self.completed_messages: List[Message] = []
         self._last_rendered_html: str = ""
+
+    def set_usage_metadata(
+        self, prompt_tokens: Any = None, candidates_tokens: Optional[int] = None, total_tokens: Optional[int] = None
+    ) -> None:
+        """Sets API usage token counts from either a metadata object or separate token counts."""
+        try:
+            if candidates_tokens is None and total_tokens is None and prompt_tokens is not None:
+                meta = prompt_tokens
+                p = getattr(meta, "prompt_token_count", None) or (meta.get("prompt_tokens") if isinstance(meta, dict) else 0) or 0
+                c = getattr(meta, "candidates_token_count", None) or (meta.get("candidates_tokens") if isinstance(meta, dict) else 0) or 0
+                t = getattr(meta, "total_token_count", None) or (meta.get("total_tokens") if isinstance(meta, dict) else 0) or 0
+                self.prompt_tokens = int(p)
+                self.candidates_tokens = int(c)
+                self.total_tokens = int(t)
+                self.usage_metadata = meta
+            else:
+                self.prompt_tokens = int(prompt_tokens) if prompt_tokens is not None else None
+                self.candidates_tokens = int(candidates_tokens) if candidates_tokens is not None else None
+                self.total_tokens = int(total_tokens) if total_tokens is not None else None
+                self.usage_metadata = {
+                    "prompt_tokens": self.prompt_tokens,
+                    "candidates_tokens": self.candidates_tokens,
+                    "total_tokens": self.total_tokens,
+                }
+        except (ValueError, TypeError):
+            pass
+
+    def update_usage_from_chunk(self, chunk: Any) -> None:
+        """Extracts token usage metadata from chunk if available."""
+        meta = getattr(chunk, "usage_metadata", None)
+        if meta is not None:
+            try:
+                p = getattr(meta, "prompt_token_count", None)
+                c = getattr(meta, "candidates_token_count", None)
+                t = getattr(meta, "total_token_count", None)
+                p_int = int(p) if p is not None else 0
+                c_int = int(c) if c is not None else 0
+                t_int = int(t) if t is not None else 0
+                if t_int > 0 or p_int > 0 or c_int > 0:
+                    self.set_usage_metadata(p_int, c_int, t_int)
+            except (ValueError, TypeError):
+                pass
 
     def abort(self) -> None:
         """Flags the throttler as aborted, stopping any subsequent updates."""
@@ -464,6 +512,28 @@ class MessageStreamThrottler:
         without balancer or typing cursors, attaches quick actions keyboard (if provided),
         and returns complete raw markdown for history.
         """
+        self.elapsed_time = time.monotonic() - self.start_time
+
+        hud_parts = []
+        if isinstance(self.elapsed_time, (int, float)):
+            hud_parts.append(f"⚡ {self.elapsed_time:.1f}s")
+        if isinstance(self.total_tokens, int) and self.total_tokens > 0:
+            hud_parts.append(f"📊 {self.total_tokens} токенов")
+
+        if hud_parts:
+            hud_line = " • ".join(hud_parts)
+            if self.header_text and not self.completed_messages:
+                hdr = self.header_text.rstrip("\r\n")
+                if any(line.strip().startswith(">") for line in hdr.splitlines()):
+                    self.header_text = f"{hdr}\n> {hud_line}\n\n"
+                else:
+                    self.header_text = f"{hdr}\n{hud_line}\n\n"
+            else:
+                if self.current_chunk_text.strip():
+                    self.current_chunk_text += f"\n\n> {hud_line}"
+                else:
+                    self.current_chunk_text = f"> {hud_line}"
+
         final_markup = (
             quick_actions_keyboard
             if quick_actions_keyboard is not None

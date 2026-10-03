@@ -272,3 +272,27 @@
   - [x] 12 новых тестов в `tests/test_ui_phase1.py`
   - [x] Обновление существующих тестов под сигнатуры методов
   - [x] Успешное прохождение всех 107 тестов (107/107 pass)
+
+---
+
+## 17. Рефакторинг UX и системных настроек (Фаза 2)
+- [x] HUD расхода токенов и времени генерации (Token & Speed HUD, IDEA-012):
+  - [x] Фиксация `start_time` при инициализации `MessageStreamThrottler` и расчет `elapsed_time`
+  - [x] Инкапсуляция `StreamChunk` с `usage_metadata` в `services/gemini.py`
+  - [x] Методы `set_usage_metadata` и `update_usage_from_chunk` в `MessageStreamThrottler`
+  - [x] Вывод наглядной строки метрик `⚡ 1.2с • 📊 450 токенов (Prompt: 110, Gen: 340)` в шапку ответа
+- [x] Настраиваемый тайм-аут жизни ZK-сессии (Configurable Session TTL, IDEA-016):
+  - [x] Добавлена колонка `session_ttl_minutes` (INTEGER DEFAULT 60 NOT NULL) в модель `User` и автомиграция в `core/database.py`
+  - [x] Методы `update_settings(session_ttl_minutes=...)` и `update_session_ttl(...)` в `UserRepository`
+  - [x] Поддержка динамического TTL в `SessionManager` (`is_session_active`, `get_fernet`, `is_unlocked`) и в `AuthMiddleware`
+  - [x] Клавиатура `get_session_ttl_keyboard` (15 мин, 1 час, 8 часов, 24 часа) и обработка колбэков в `handlers/settings.py`
+- [x] Песочница исполнения Python-кода (Code Execution Sandbox, IDEA-003):
+  - [x] Добавлена колонка `enable_code_execution` (BOOLEAN DEFAULT 0 NOT NULL) в модель `User` и автомиграция в `core/database.py`
+  - [x] Метод `toggle_code_execution(...)` в `UserRepository`
+  - [x] Тумблер `🐍 Песочница Python: 🟢 Вкл / 🔴 Выкл` в меню Настроек и колбэк `settings_toggle_code_exec`
+  - [x] Подключение `types.Tool(code_execution=types.ToolCodeExecution())` в `services/gemini.py` и передача флага в `handlers/chat.py`
+- [x] Комплексное тестирование:
+  - [x] 11 новых тестов в `tests/test_phase2_backend.py`
+  - [x] 11 новых тестов в `tests/test_ui_phase2.py`
+  - [x] Успешное прохождение всех 129 тестов (129/129 pass, 100% success)
+

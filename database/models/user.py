@@ -5,7 +5,7 @@ BLOB fields store cryptographic hashes, salts, and encrypted tokens.
 """
 
 from typing import Optional
-from sqlalchemy import String, Integer, LargeBinary, ForeignKey
+from sqlalchemy import String, Integer, LargeBinary, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from core.database import Base
 
@@ -32,6 +32,8 @@ class User(Base):
     message_format: Mapped[str] = mapped_column(String, default="rich", nullable=False)
     header_style: Mapped[str] = mapped_column(String, default="blockquote", nullable=False)
     thinking_budget: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
+    session_ttl_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    enable_code_execution: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Zero-Knowledge Security Fields (BLOB)
     master_password_hash: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)

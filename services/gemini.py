@@ -62,6 +62,11 @@ class GeminiQuotaExceededException(GeminiAPIException):
     pass
 
 
+class StreamChunk(str):
+    """String subclass that preserves chunk usage metadata."""
+    usage_metadata: Optional[Any] = None
+
+
 class GeminiService:
     """Service wrapping modern google-genai SDK for Telegram bot."""
 
@@ -70,6 +75,7 @@ class GeminiService:
             raise ValueError("API key must not be empty.")
         self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
+        self.last_usage_metadata: Optional[Dict[str, int]] = None
 
     async def get_available_models(self) -> List[Dict[str, Any]]:
         """
@@ -138,20 +144,33 @@ class GeminiService:
 
     async def generate_stream(
         self,
-        model_id: str,
-        contents: List[Any],
+        model_id: str = settings.DEFAULT_MODEL_ID,
+        contents: Optional[List[Any]] = None,
         system_instruction: Optional[str] = None,
         enable_search: bool = True,
+        enable_code_execution: bool = False,
         temperature: float = 0.8,
         max_output_tokens: int = 24576,
         thinking_budget: Optional[int] = None,
-    ) -> AsyncGenerator[str, None]:
+        prompt: Optional[str] = None,
+    ) -> AsyncGenerator[StreamChunk, None]:
         """
-        Asynchronous streaming generation with automatic Google Search tool grounding,
+        Asynchronous streaming generation with automatic Google Search and Code Execution tool grounding,
         thinking budget configuration, tool unsupported fallback, and 429 quota handling.
         """
-        use_search = enable_search and model_supports_search(model_id)
-        tools = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+        if contents is None and prompt is not None:
+            contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+        elif contents is None:
+            contents = []
+
+        tools = []
+        if enable_search and model_supports_search(model_id):
+            tools.append(types.Tool(google_search=types.GoogleSearch()))
+
+        if enable_code_execution and model_supports_search(model_id):
+            tools.append(types.Tool(code_execution=types.ToolCodeExecution()))
+
+        tools_config = tools if tools else None
 
         clean_model = model_id.lower().replace("models/", "")
         is_thinking_model = "gemini-2.5-" in clean_model and "-lite" not in clean_model
@@ -166,7 +185,7 @@ class GeminiService:
             top_p=1.0,
             max_output_tokens=max_output_tokens,
             system_instruction=system_instruction,
-            tools=tools,
+            tools=tools_config,
             thinking_config=thinking_config,
         )
 
@@ -177,11 +196,19 @@ class GeminiService:
                 config=config,
             )
             async for chunk in stream:
+                if getattr(chunk, "usage_metadata", None):
+                    self.last_usage_metadata = {
+                        "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                        "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                        "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                    }
                 if chunk.text:
                     if "<tool_code" in chunk.text or "google_search.search" in chunk.text:
                         logger.warning(f"Suppressed leaked tool_code chunk: {chunk.text[:80]}")
                         continue
-                    yield chunk.text
+                    chunk_obj = StreamChunk(chunk.text)
+                    chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                    yield chunk_obj
 
         except APIError as e:
             err_msg = str(e)
@@ -203,10 +230,18 @@ class GeminiService:
                         config=fallback_config,
                     )
                     async for chunk in stream:
+                        if getattr(chunk, "usage_metadata", None):
+                            self.last_usage_metadata = {
+                                "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                                "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                                "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                            }
                         if chunk.text:
                             if "<tool_code" in chunk.text or "google_search.search" in chunk.text:
                                 continue
-                            yield chunk.text
+                            chunk_obj = StreamChunk(chunk.text)
+                            chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                            yield chunk_obj
                     return
                 else:
                     raise GeminiQuotaExceededException("Превышена квота запросов (429). Попробуйте позже.")
@@ -215,7 +250,7 @@ class GeminiService:
             if "tool" in err_msg.lower() and ("not supported" in err_msg.lower() or "invalid" in err_msg.lower()):
                 clean_id = model_id.lower().replace("models/", "")
                 KNOWN_NO_SEARCH_MODELS.add(clean_id)
-                logger.warning(f"Search tool not supported on {model_id}. Retrying without tools...")
+                logger.warning(f"Search/code tool not supported on {model_id}. Retrying without tools...")
 
                 retry_config = types.GenerateContentConfig(
                     temperature=temperature,
@@ -231,8 +266,16 @@ class GeminiService:
                     config=retry_config,
                 )
                 async for chunk in stream:
+                    if getattr(chunk, "usage_metadata", None):
+                        self.last_usage_metadata = {
+                            "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                            "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                            "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                        }
                     if chunk.text:
-                        yield chunk.text
+                        chunk_obj = StreamChunk(chunk.text)
+                        chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                        yield chunk_obj
                 return
 
             raise GeminiAPIException(f"Gemini API Error: {err_msg}", status_code=e.code)
