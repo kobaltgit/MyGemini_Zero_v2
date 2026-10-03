@@ -144,13 +144,22 @@ class GeminiService:
         enable_search: bool = True,
         temperature: float = 0.8,
         max_output_tokens: int = 24576,
+        thinking_budget: Optional[int] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Asynchronous streaming generation with automatic Google Search tool grounding,
-        tool unsupported fallback, and 429 quota handling.
+        thinking budget configuration, tool unsupported fallback, and 429 quota handling.
         """
         use_search = enable_search and model_supports_search(model_id)
         tools = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+
+        clean_model = model_id.lower().replace("models/", "")
+        is_thinking_model = "gemini-2.5-" in clean_model and "-lite" not in clean_model
+        thinking_config = (
+            types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=True)
+            if (thinking_budget is not None and is_thinking_model)
+            else None
+        )
 
         config = types.GenerateContentConfig(
             temperature=temperature,
@@ -158,6 +167,7 @@ class GeminiService:
             max_output_tokens=max_output_tokens,
             system_instruction=system_instruction,
             tools=tools,
+            thinking_config=thinking_config,
         )
 
         try:
@@ -213,6 +223,7 @@ class GeminiService:
                     max_output_tokens=max_output_tokens,
                     system_instruction=system_instruction,
                     tools=None,
+                    thinking_config=thinking_config,
                 )
                 stream = await self.client.aio.models.generate_content_stream(
                     model=model_id,

@@ -6,18 +6,22 @@ Displays 📎 icon for dialogs with attached documents and includes ❌ Закр
 Supports full bilingualism (RU / EN), FSM state clearing and safe editing.
 """
 
+from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
 from core.database import async_session_maker
-from database.repositories import DialogRepository, UserRepository
+from database.repositories import DialogRepository, UserRepository, ConversationRepository
 from services.vector_store import VectorStoreManager
-from keyboards.inline import get_main_menu_keyboard, get_close_button, get_cancel_keyboard
+from middlewares.auth import session_manager
+from keyboards.inline import get_main_menu_keyboard, get_close_button, get_cancel_keyboard, get_dialog_menu_keyboard
 from core.ui_helpers import safe_edit_message_text, safe_answer_callback
 from core.config import settings
+from core.logger import get_logger
 
+logger = get_logger("user_messages")
 router = Router(name="dialogs")
 
 
@@ -69,6 +73,10 @@ async def handle_dialog_list(callback: CallbackQuery, state: FSMContext | None =
                 callback_data=f"dialog_switch:{d.dialog_id}",
             ),
             InlineKeyboardButton(
+                text="📥",
+                callback_data=f"dialog_export:{d.dialog_id}",
+            ),
+            InlineKeyboardButton(
                 text="✏️",
                 callback_data=f"dialog_rename_prompt:{d.dialog_id}",
             ),
@@ -87,13 +95,15 @@ async def handle_dialog_list(callback: CallbackQuery, state: FSMContext | None =
         "🗂 <b>Ваши диалоги:</b>\n\n"
         "🟢 — активный диалог (текущий контекст)\n"
         "▫️ — сохранённый диалог\n"
-        "📎 — диалог содержит прикреплённые документы (RAG-память)\n\n"
+        "📎 — диалог содержит прикреплённые документы (RAG-память)\n"
+        "📥 — экспорт истории в Markdown (.md)\n\n"
         "Нажмите на название диалога, чтобы переключиться на него:"
         if lang_code == "ru"
         else "🗂 <b>Your Dialogues:</b>\n\n"
         "🟢 — active dialogue (current context)\n"
         "▫️ — saved dialogue\n"
-        "📎 — dialogue has attached documents (RAG memory)\n\n"
+        "📎 — dialogue has attached documents (RAG memory)\n"
+        "📥 — export history to Markdown (.md)\n\n"
         "Click a dialogue name to switch to it:"
     )
 
@@ -257,3 +267,105 @@ async def handle_dialog_delete(callback: CallbackQuery):
         await safe_answer_callback(callback, err_msg, show_alert=True)
 
     await handle_dialog_list(callback)
+
+
+@router.callback_query(F.data.startswith("dialog_export:"))
+async def handle_dialog_export(callback: CallbackQuery):
+    """Exports dialog message history as a clean GitHub-flavored Markdown document."""
+    user_id = callback.from_user.id
+    try:
+        dialog_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await safe_answer_callback(callback, "Неверный ID диалога / Invalid dialogue ID", show_alert=True)
+        return
+
+    fernet = session_manager.get_fernet(user_id)
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if not fernet:
+        locked_text = (
+            "🔒 Память заблокирована. Пожалуйста, разблокируйте сейф мастер-паролем, чтобы экспортировать диалог."
+            if lang_code == "ru"
+            else "🔒 Vault is locked. Please unlock with master password to export dialogue."
+        )
+        await safe_answer_callback(callback, locked_text, show_alert=True)
+        return
+
+    async with async_session_maker() as session:
+        dialog_repo = DialogRepository(session)
+        dialog = await dialog_repo.get_by_id(dialog_id)
+        if not dialog or dialog.user_id != user_id:
+            not_found = "Диалог не найден." if lang_code == "ru" else "Dialogue not found."
+            await safe_answer_callback(callback, not_found, show_alert=True)
+            return
+
+        conv_repo = ConversationRepository(session)
+        messages = await conv_repo.get_dialog_messages(dialog_id, fernet, limit=None)
+
+    now_dt = datetime.now()
+    now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    file_ts = now_dt.strftime("%Y%m%d_%H%M%S")
+    model_name = user.gemini_model if user and user.gemini_model else settings.DEFAULT_MODEL_ID
+
+    # Build Markdown document
+    lines = [
+        f"# 💬 {dialog.name}",
+        "",
+        f"- **ID:** `{dialog_id}`",
+        f"- **Export Date:** {now_str}",
+        f"- **Model:** `{model_name}`",
+        f"- **Total Messages:** {len(messages)}",
+        "",
+        "---",
+        "",
+    ]
+
+    if not messages:
+        empty_note = "*(Диалог пока пуст / Dialogue is empty)*"
+        lines.append(empty_note)
+    else:
+        for m in messages:
+            role = m.get("role", "user")
+            ts = m.get("timestamp", "")
+            raw_text = (m.get("text") or "").strip()
+
+            if role == "user":
+                user_label = "👤 Пользователь" if lang_code == "ru" else "👤 User"
+                header_line = f"### {user_label} ({ts})" if ts else f"### {user_label}"
+            else:
+                bot_label = "🤖 Ассистент" if lang_code == "ru" else "🤖 Assistant"
+                header_line = f"### {bot_label} ({ts})" if ts else f"### {bot_label}"
+
+            lines.append(header_line)
+            lines.append("")
+            lines.append(raw_text)
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+    md_content = "\n".join(lines)
+    md_bytes = md_content.encode("utf-8")
+    filename = f"dialog_{dialog_id}_{file_ts}.md"
+
+    doc = BufferedInputFile(file=md_bytes, filename=filename)
+    caption = (
+        f"📥 Экспорт диалога: <b>{dialog.name}</b>"
+        if lang_code == "ru"
+        else f"📥 Export of dialogue: <b>{dialog.name}</b>"
+    )
+
+    await safe_answer_callback(callback, "Подготовка файла экспорта..." if lang_code == "ru" else "Preparing export file...")
+    try:
+        await callback.message.answer_document(
+            document=doc,
+            caption=caption,
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Failed to send export document: {e}")
+        err_msg = "Ошибка отправки файла" if lang_code == "ru" else "Failed to send file"
+        await safe_answer_callback(callback, err_msg, show_alert=True)
+

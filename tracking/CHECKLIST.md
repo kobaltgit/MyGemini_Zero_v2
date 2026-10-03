@@ -248,3 +248,25 @@
 - [x] Добавление кнопки и меню выбора стиля шапки в keyboards/inline.py и handlers/settings.py
 - [x] Реализация методов UserRepository.update_header_style и поддержка в update_settings
 - [x] Написание юнит-тестов на клавиатуры, репозиторий и троттлер: 90/90 тестов успешно пройдены (100% pass)
+
+---
+
+## 16. Рефакторинг UX и интерактивных возможностей (Фаза 1)
+- [x] Конфигурация глубины размышлений (Thinking Budget) для моделей `gemini-2.5-*`:
+  - [x] Добавлена колонка `thinking_budget` (INTEGER DEFAULT 1024 NOT NULL) в модель `User` и автомиграция в `core/database.py`
+  - [x] Поддержка `thinking_budget` в `UserRepository.update_settings` и отдельный метод `update_thinking_budget`
+  - [x] Интеграция `types.ThinkingConfig(thinking_budget=..., include_thoughts=True)` в `services/gemini.py`
+  - [x] Инлайн-меню выбора бюджета (⚡ Мгновенно / ⚖️ Баланс / 🔬 Глубокий анализ) в `keyboards/inline.py` и `handlers/settings.py`
+- [x] Быстрые действия под ответом модели (Quick Actions):
+  - [x] Метод `ConversationRepository.delete_last_assistant_message(dialog_id)`
+  - [x] Метод `ConversationRepository.delete_last_turn(dialog_id, fernet)` с возвратом текста запроса пользователя
+  - [x] Поддержка `stop_keyboard` и `quick_actions_keyboard` в `MessageStreamThrottler` (`services/throttler.py`)
+  - [x] Кнопка `[⏹️ Стоп]` (`chat_action:stop`) во время стриминга с прерыванием генерации
+  - [x] Кнопки `[🔄 Еще раз]` (`chat_action:regen`) и `[↩️ Откатить шаг]` (`chat_action:undo`) под завершенным сообщением
+- [x] Экспорт диалога в Markdown (`.md`):
+  - [x] Кнопка `📥 Экспорт в Markdown` в меню управления диалогом (`keyboards/inline.py`)
+  - [x] Хэндлер `dialog_export:<id>` в `handlers/dialogs.py` с дешифровкой на лету в RAM и отправкой через `BufferedInputFile`
+- [x] Комплексное тестирование:
+  - [x] 11 новых тестов в `tests/test_ui_phase1.py`
+  - [x] Обновление существующих тестов под сигнатуры методов
+  - [x] Успешное прохождение всех 106 тестов (106/106 pass)

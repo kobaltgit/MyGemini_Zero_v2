@@ -235,3 +235,69 @@ class TestMessageStreamThrottlerRich:
         bot.send_message.assert_awaited_once()
         assert "Ответ, который нельзя потерять" in bot.send_message.call_args.kwargs["text"]
 
+
+@pytest.mark.asyncio
+class TestThrottlerAbortAndKeyboards:
+    """Tests for abort() and inline keyboards in MessageStreamThrottler."""
+
+    async def test_throttler_abort_stops_chunk_processing(self):
+        bot = MagicMock(spec=Bot)
+        bot.edit_message_text = AsyncMock()
+
+        msg = MagicMock(spec=Message)
+        msg.message_id = 9911
+
+        throttler = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=msg,
+            throttle_interval=0.01,
+        )
+
+        assert throttler.is_aborted is False
+        await throttler.handle_chunk("Before abort. ")
+        throttler.abort()
+        assert throttler.is_aborted is True
+
+        # Next chunk should be ignored
+        await throttler.handle_chunk("After abort ignored.")
+        final_text = await throttler.finalize()
+        assert final_text == "Before abort. "
+
+    async def test_throttler_stop_and_quick_actions_keyboards(self):
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        bot = MagicMock(spec=Bot)
+        bot.edit_message_text = AsyncMock()
+
+        msg = MagicMock(spec=Message)
+        msg.message_id = 9922
+
+        stop_kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="⏹️ Стоп", callback_data="stop_gen")]]
+        )
+        quick_kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔄 Еще раз", callback_data="regen")]]
+        )
+
+        throttler = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=msg,
+            throttle_interval=0.01,
+            stop_keyboard=stop_kb,
+            quick_actions_keyboard=quick_kb,
+        )
+
+        await throttler.handle_chunk("Generating text...")
+        # Verify edit during stream includes stop_keyboard
+        assert bot.edit_message_text.await_count >= 1
+        stream_call_kwargs = bot.edit_message_text.call_args.kwargs
+        assert stream_call_kwargs.get("reply_markup") == stop_kb
+
+        # Finalize with quick actions keyboard
+        await throttler.finalize()
+        final_call_kwargs = bot.edit_message_text.call_args.kwargs
+        assert final_call_kwargs.get("reply_markup") == quick_kb
+
+

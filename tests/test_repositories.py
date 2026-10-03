@@ -261,6 +261,72 @@ class TestConversationRepository:
         assert len(recent_4) == 4
         assert [m["text"] for m in recent_4] == ["Message 7", "Message 8", "Message 9", "Message 10"]
 
+    async def test_user_thinking_budget(self, async_session: AsyncSession):
+        user_repo = UserRepository(async_session)
+        uid = 777888
+        user, _ = await user_repo.add_or_update_user(uid, "thinker", "Think", "User")
+        assert user.thinking_budget == 1024
+
+        await user_repo.update_thinking_budget(uid, 4096)
+        user_updated = await user_repo.get_by_id(uid)
+        assert user_updated.thinking_budget == 4096
+
+        await user_repo.update_settings(uid, thinking_budget=0)
+        user_updated2 = await user_repo.get_by_id(uid)
+        assert user_updated2.thinking_budget == 0
+
+    async def test_delete_last_assistant_message_and_turn(self, async_session: AsyncSession):
+        user_repo = UserRepository(async_session)
+        dialog_repo = DialogRepository(async_session)
+        conv_repo = ConversationRepository(async_session)
+
+        uid = 888999
+        await user_repo.add_or_update_user(uid, "turn_test", "Turn", "User")
+        await user_repo.set_master_password(uid, "turn_pass")
+        salt = await user_repo.get_salt(uid)
+        fernet = get_fernet_instance("turn_pass", salt)
+
+        dialog = await dialog_repo.create_dialog(uid, "Turn Dialog")
+        d_id = dialog.dialog_id
+
+        # Empty dialog cases
+        assert await conv_repo.delete_last_assistant_message(d_id) is None
+        empty_text, empty_cnt = await conv_repo.delete_last_turn(d_id, fernet)
+        assert empty_text is None and empty_cnt is None
+
+        # Add Turn 1
+        await conv_repo.add_message(uid, d_id, "user", "Question 1", fernet)
+        msg_bot1 = await conv_repo.add_message(uid, d_id, "bot", "Answer 1", fernet)
+
+        # Test delete_last_assistant_message
+        deleted_bot_id = await conv_repo.delete_last_assistant_message(d_id)
+        assert deleted_bot_id == msg_bot1.conversation_id
+        msgs_left = await conv_repo.get_dialog_messages(d_id, fernet)
+        assert len(msgs_left) == 1
+        assert msgs_left[0]["text"] == "Question 1"
+
+        # Re-add bot answer 1, then Turn 2
+        await conv_repo.add_message(uid, d_id, "bot", "Answer 1 regenerated", fernet)
+        await conv_repo.add_message(uid, d_id, "user", "Question 2", fernet)
+        await conv_repo.add_message(uid, d_id, "bot", "Answer 2", fernet)
+
+        # Test delete_last_turn
+        user_text, del_count = await conv_repo.delete_last_turn(d_id, fernet)
+        assert user_text == "Question 2"
+        assert del_count == 2
+
+        # Check that only Turn 1 remains
+        msgs_after_turn = await conv_repo.get_dialog_messages(d_id, fernet)
+        assert len(msgs_after_turn) == 2
+        assert [m["text"] for m in msgs_after_turn] == ["Question 1", "Answer 1 regenerated"]
+
+        # Test turn deletion when only user message exists without assistant reply
+        await conv_repo.add_message(uid, d_id, "user", "Unanswered Question", fernet)
+        user_text_unanswered, del_count_unanswered = await conv_repo.delete_last_turn(d_id, fernet)
+        assert user_text_unanswered == "Unanswered Question"
+        assert del_count_unanswered == 1
+
+
 
 @pytest.mark.asyncio
 class TestPaymentAndSettingsRepositories:

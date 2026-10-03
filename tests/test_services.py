@@ -172,3 +172,48 @@ class TestCalendarHelper:
         header_text = kb.inline_keyboard[0][0].text
         # Header text should contain English month or year
         assert str(now.year) in header_text
+
+
+@pytest.mark.asyncio
+class TestGeminiServiceThinkingBudget:
+    """Tests for thinking_budget configuration in GeminiService."""
+
+    async def test_thinking_config_applied_to_gemini_2_5_models(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from services.gemini import GeminiService
+
+        service = GeminiService(api_key="fake-test-key")
+
+        mock_stream = AsyncMock()
+        mock_chunk = MagicMock()
+        mock_chunk.text = "Thought result"
+        mock_stream.__aiter__.return_value = [mock_chunk]
+
+        with patch.object(service.client.aio.models, "generate_content_stream", new=AsyncMock(return_value=mock_stream)) as mock_gen:
+            # 1. Thinking model gemini-2.5-flash with budget 2048
+            chunks = []
+            async for c in service.generate_stream(
+                model_id="gemini-2.5-flash",
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text="Hi")])],
+                thinking_budget=2048,
+            ):
+                chunks.append(c)
+
+            assert chunks == ["Thought result"]
+            call_config = mock_gen.call_args.kwargs["config"]
+            assert call_config.thinking_config is not None
+            assert call_config.thinking_config.thinking_budget == 2048
+            assert call_config.thinking_config.include_thoughts is True
+
+            # 2. Non-thinking model (-lite) with budget provided -> thinking_config must be None
+            chunks_lite = []
+            async for c in service.generate_stream(
+                model_id="gemini-2.5-flash-lite",
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text="Hi")])],
+                thinking_budget=2048,
+            ):
+                chunks_lite.append(c)
+
+            call_config_lite = mock_gen.call_args.kwargs["config"]
+            assert call_config_lite.thinking_config is None
+

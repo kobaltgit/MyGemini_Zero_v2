@@ -206,8 +206,9 @@ class UserRepository:
         active_dialog_id: Optional[int] = None,
         message_format: Optional[str] = None,
         header_style: Optional[str] = None,
+        thinking_budget: Optional[int] = None,
     ) -> None:
-        """Updates user preferences (model, persona, style, language, active dialog, message format, header style)."""
+        """Updates user preferences (model, persona, style, language, active dialog, message format, header style, thinking budget)."""
         values = {}
         if style is not None:
             values["bot_style"] = style
@@ -223,11 +224,19 @@ class UserRepository:
             values["message_format"] = message_format
         if header_style is not None:
             values["header_style"] = header_style
+        if thinking_budget is not None:
+            values["thinking_budget"] = thinking_budget
 
         if values:
             stmt = update(User).where(User.user_id == user_id).values(**values)
             await self.session.execute(stmt)
             await self.session.commit()
+
+    async def update_thinking_budget(self, user_id: int, budget: int) -> None:
+        """Sets thinking budget for Gemini 2.5 models."""
+        stmt = update(User).where(User.user_id == user_id).values(thinking_budget=budget)
+        await self.session.execute(stmt)
+        await self.session.commit()
 
     async def update_message_format(self, user_id: int, message_format: str) -> None:
         """Sets message formatting mode ('rich' or 'markdown') for user."""

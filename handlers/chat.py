@@ -5,10 +5,10 @@ multimodal processing (Images, Audio, PDF/DOCX), accidental API key interception
 bilingual stream header, error parser mapping, and safe streaming via MessageStreamThrottler.
 """
 
-from typing import List, Any
+from typing import List, Any, Dict, Optional
 from io import BytesIO
 from aiogram import Router, F, Bot
-from aiogram.types import Message, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
 from google.genai import types
 
 from core.database import async_session_maker
@@ -27,14 +27,20 @@ from keyboards.inline import (
     get_subscription_keyboard,
     get_main_menu_keyboard,
     get_close_button,
+    get_chat_quick_actions_keyboard,
+    get_streaming_stop_keyboard,
 )
 from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from core.config import settings, BOT_STYLES, BOT_PERSONAS, SUBSCRIPTION_PLANS
+from core.ui_helpers import safe_edit_message_text, safe_answer_callback
 from core.localization import get_text
 from core.logger import get_logger
 
 logger = get_logger("user_messages")
 router = Router(name="chat")
+
+# Active message throttlers mapped by chat_id for live stop / abortion support
+active_streams: Dict[int, MessageStreamThrottler] = {}
 
 
 @router.message(F.text | F.photo | F.voice | F.document)
@@ -437,6 +443,10 @@ async def handle_user_message(message: Message, bot: Bot):
         thinking_text = "💭 <i>Thinking...</i>"
         thinking_summary = "Reasoning"
 
+    thinking_budget = getattr(user, "thinking_budget", 1024)
+    if thinking_budget is None:
+        thinking_budget = 1024
+
     # 9. Start streaming response
     placeholder_msg = await message.answer(thinking_text, parse_mode="HTML")
     throttler = MessageStreamThrottler(
@@ -448,9 +458,12 @@ async def handle_user_message(message: Message, bot: Bot):
         message_format=user_format,
         thinking_summary=thinking_summary,
         header_style=header_style,
+        stop_keyboard=get_streaming_stop_keyboard(lang_code),
+        quick_actions_keyboard=get_chat_quick_actions_keyboard(lang_code),
     )
 
     gemini_service = GeminiService(api_key=api_key)
+    active_streams[message.chat.id] = throttler
 
     try:
         stream = gemini_service.generate_stream(
@@ -458,8 +471,11 @@ async def handle_user_message(message: Message, bot: Bot):
             contents=gemini_contents,
             system_instruction=system_instruction,
             enable_search=True,
+            thinking_budget=thinking_budget,
         )
         async for chunk in stream:
+            if throttler.is_aborted:
+                break
             await throttler.handle_chunk(chunk)
 
         full_reply_text = await throttler.finalize()
@@ -484,6 +500,8 @@ async def handle_user_message(message: Message, bot: Bot):
 
         await message.answer(friendly_error)
         return
+    finally:
+        active_streams.pop(message.chat.id, None)
 
     # 10. Save encrypted messages to DB
     async with async_session_maker() as session:
@@ -497,10 +515,322 @@ async def handle_user_message(message: Message, bot: Bot):
             fernet_instance=fernet,
         )
         # Save assistant message
-        await conv_repo.add_message(
-            user_id=user_id,
-            dialog_id=active_dialog_id,
-            role="bot",
-            message_text=full_reply_text,
-            fernet_instance=fernet,
+        if full_reply_text and full_reply_text.strip():
+            await conv_repo.add_message(
+                user_id=user_id,
+                dialog_id=active_dialog_id,
+                role="bot",
+                message_text=full_reply_text,
+                fernet_instance=fernet,
+            )
+
+
+@router.callback_query(F.data == "chat_action:stop")
+async def handle_chat_action_stop(callback: CallbackQuery):
+    """Aborts active generation stream for this chat."""
+    chat_id = callback.message.chat.id if callback.message else callback.from_user.id
+    throttler = active_streams.get(chat_id)
+    if throttler:
+        throttler.abort()
+        ans_text = "⏹️ Генерация остановлена" if (callback.from_user.language_code or "").startswith("ru") else "⏹️ Generation stopped"
+        await safe_answer_callback(callback, ans_text)
+    else:
+        ans_text = "Генерация уже завершена" if (callback.from_user.language_code or "").startswith("ru") else "Generation already finished"
+        await safe_answer_callback(callback, ans_text)
+
+
+@router.callback_query(F.data == "chat_action:undo")
+async def handle_chat_action_undo(callback: CallbackQuery):
+    """Deletes the last turn (bot message and preceding user message) from active dialog."""
+    user_id = callback.from_user.id
+    fernet = session_manager.get_fernet(user_id)
+    if not fernet:
+        ans_text = (
+            "🔒 Сейф заблокирован. Разблокируйте память мастер-паролем."
+            if (callback.from_user.language_code or "").startswith("ru")
+            else "🔒 Vault is locked. Please unlock with master password."
         )
+        await safe_answer_callback(callback, ans_text, show_alert=True)
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        active_dialog_id = user.active_dialog_id if user else None
+
+        if not active_dialog_id:
+            await safe_answer_callback(
+                callback,
+                "Активный диалог не найден." if lang_code == "ru" else "No active dialogue found.",
+                show_alert=True,
+            )
+            return
+
+        conv_repo = ConversationRepository(session)
+        user_text, deleted_count = await conv_repo.delete_last_turn(active_dialog_id, fernet)
+
+    if deleted_count and deleted_count > 0:
+        await safe_answer_callback(callback, "Шаг отменён" if lang_code == "ru" else "Turn undone")
+        notice = (
+            "↩️ <b>Последний шаг отменен. Контекст очищен.</b>"
+            if lang_code == "ru"
+            else "↩️ <b>Last turn undone. Context cleared.</b>"
+        )
+        if user_text:
+            prompt_preview = user_text[:150] + ("..." if len(user_text) > 150 else "")
+            notice += f"\n\n<i>«{prompt_preview}»</i>"
+        try:
+            await safe_edit_message_text(
+                callback.message,
+                notice,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    else:
+        empty_msg = "Нет сообщений для отмены." if lang_code == "ru" else "No turns to undo."
+        await safe_answer_callback(callback, empty_msg, show_alert=True)
+
+
+@router.callback_query(F.data == "chat_action:regen")
+async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
+    """Regenerates the last assistant response for the user's last prompt."""
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id if callback.message else user_id
+
+    if chat_id in active_streams:
+        await safe_answer_callback(
+            callback,
+            "Пожалуйста, подождите завершения текущей генерации."
+            if (callback.from_user.language_code or "").startswith("ru")
+            else "Please wait for current generation to finish.",
+            show_alert=True,
+        )
+        return
+
+    fernet = session_manager.get_fernet(user_id)
+    if not fernet:
+        await safe_answer_callback(
+            callback,
+            "🔒 Сейф заблокирован. Разблокируйте память мастер-паролем."
+            if (callback.from_user.language_code or "").startswith("ru")
+            else "🔒 Vault is locked. Please unlock with master password.",
+            show_alert=True,
+        )
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if not user or not user.active_dialog_id:
+            await safe_answer_callback(
+                callback,
+                "Активный диалог не найден."
+                if (callback.from_user.language_code or "").startswith("ru")
+                else "Active dialogue not found.",
+                show_alert=True,
+            )
+            return
+
+        active_dialog_id = user.active_dialog_id
+        lang_code = user.language_code or "ru"
+        api_key = await user_repo.get_api_key(user_id, fernet) or settings.GEMINI_API_KEY
+        if not api_key:
+            await safe_answer_callback(
+                callback,
+                "🔑 API-ключ не установлен." if lang_code == "ru" else "🔑 API key not set.",
+                show_alert=True,
+            )
+            return
+
+        conv_repo = ConversationRepository(session)
+        # 1. Delete last assistant response
+        deleted_id = await conv_repo.delete_last_assistant_message(active_dialog_id)
+        if not deleted_id:
+            await safe_answer_callback(
+                callback,
+                "Нет ответа для повторной генерации." if lang_code == "ru" else "No response to regenerate.",
+                show_alert=True,
+            )
+            return
+
+        # 2. Get updated history to extract user prompt
+        history_records = await conv_repo.get_dialog_messages(active_dialog_id, fernet, limit=20)
+        if not history_records:
+            await safe_answer_callback(
+                callback,
+                "История сообщений пуста." if lang_code == "ru" else "Conversation history is empty.",
+                show_alert=True,
+            )
+            return
+
+        last_user_record = None
+        for h in reversed(history_records):
+            if h["role"] == "user":
+                last_user_record = h
+                break
+
+        if not last_user_record:
+            await safe_answer_callback(
+                callback,
+                "Запрос пользователя не найден." if lang_code == "ru" else "User prompt not found.",
+                show_alert=True,
+            )
+            return
+
+        user_prompt = last_user_record.get("text", "")
+
+        dialog_repo = DialogRepository(session)
+        active_d = await dialog_repo.get_by_id(active_dialog_id)
+        dialog_title = active_d.name if active_d else ("Основной диалог" if lang_code == "ru" else "Main Dialogue")
+
+    await safe_answer_callback(
+        callback,
+        "🔄 Перегенерация ответа..." if lang_code == "ru" else "🔄 Regenerating response..."
+    )
+
+    # Format history for Gemini SDK (excluding the prompt turn which is appended after)
+    gemini_contents = []
+    for h in history_records:
+        if h["conversation_id"] < last_user_record["conversation_id"]:
+            role = "user" if h["role"] == "user" else "model"
+            text_val = h.get("text", "")
+            if text_val and not text_val.startswith("[Ошибка"):
+                gemini_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text_val)]))
+
+    gemini_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_prompt)]))
+
+    # RAG search for user prompt
+    rag_context = ""
+    vm = VectorStoreManager(api_key=api_key)
+    if user_prompt and not user_prompt.startswith("["):
+        rag_context = await vm.search_context(active_dialog_id, user_prompt)
+
+    # Build System Instruction
+    persona_key = user.active_persona or "default"
+    style_key = user.bot_style or "default"
+    persona_data = BOT_PERSONAS.get(persona_key, {})
+    persona_prompt = persona_data.get("prompt_ru", "") if lang_code == "ru" else persona_data.get("prompt_en", persona_data.get("prompt_ru", ""))
+    style_prompt = BOT_STYLES.get(style_key, "")
+
+    system_instruction_blocks = []
+    if persona_prompt:
+        system_instruction_blocks.append(f"Role:\n{persona_prompt}")
+    if style_prompt:
+        system_instruction_blocks.append(f"Style: {style_prompt}")
+    if rag_context:
+        system_instruction_blocks.append(f"Knowledge Base:\n{rag_context}")
+
+    user_format = getattr(user, "message_format", "rich") or "rich"
+    if user_format == "rich":
+        rich_guidance = (
+            "Formatting guidelines:\n"
+            "- For structured data, tables, comparisons, or numbers, use standard GitHub-Flavored Markdown tables.\n"
+            "- For mathematical expressions, use standard LaTeX ($...$ inline, $$...$$ for display blocks).\n"
+            "- If analyzing step-by-step, wrap intermediate thinking inside <think>...</think> tags."
+            if lang_code == "en" else
+            "Правила форматирования:\n"
+            "- Для структурированных данных, списков характеристик и сравнений свободно используй компактные Markdown-таблицы.\n"
+            "- Для математических выражений используй стандартный синтаксис LaTeX ($...$ инлайн, $$...$$ отдельными блоками).\n"
+            "- Если анализируешь задачу по шагам, оборачивай свои промежуточные размышления в тег <think>...</think>."
+        )
+        system_instruction_blocks.append(rich_guidance)
+
+    system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
+
+    # Build context header
+    persona_title = persona_data.get("name_ru", persona_key) if lang_code == "ru" else persona_data.get("name_en", persona_key)
+    model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
+    header_style = getattr(user, "header_style", "blockquote") or "blockquote"
+
+    if header_style == "hidden":
+        context_header = ""
+        header_summary = ""
+    else:
+        header_summary = f"💬 {dialog_title} • ⚡ {model_id}"
+        if lang_code == "ru":
+            context_header = (
+                f"> 💬 **Диалог:** {dialog_title}\n"
+                f"> 🎭 **Персона:** {persona_title}\n"
+                f"> ⚡ **Модель:** {model_id}\n\n"
+            )
+        else:
+            context_header = (
+                f"> 💬 **Dialogue:** {dialog_title}\n"
+                f"> 🎭 **Persona:** {persona_title}\n"
+                f"> ⚡ **Model:** {model_id}\n\n"
+            )
+
+    if lang_code == "ru":
+        thinking_text = "💭 <i>Думаю...</i>"
+        thinking_summary = "Размышления"
+    else:
+        thinking_text = "💭 <i>Thinking...</i>"
+        thinking_summary = "Reasoning"
+
+    thinking_budget = getattr(user, "thinking_budget", 1024)
+    if thinking_budget is None:
+        thinking_budget = 1024
+
+    # Update callback message with thinking placeholder
+    await safe_edit_message_text(callback.message, thinking_text, parse_mode="HTML")
+    throttler = MessageStreamThrottler(
+        bot=bot,
+        chat_id=chat_id,
+        initial_message=callback.message,
+        header_text=context_header,
+        header_summary=header_summary,
+        message_format=user_format,
+        thinking_summary=thinking_summary,
+        header_style=header_style,
+        stop_keyboard=get_streaming_stop_keyboard(lang_code),
+        quick_actions_keyboard=get_chat_quick_actions_keyboard(lang_code),
+    )
+
+    gemini_service = GeminiService(api_key=api_key)
+    active_streams[chat_id] = throttler
+
+    try:
+        stream = gemini_service.generate_stream(
+            model_id=model_id,
+            contents=gemini_contents,
+            system_instruction=system_instruction,
+            enable_search=True,
+            thinking_budget=thinking_budget,
+        )
+        async for chunk in stream:
+            if throttler.is_aborted:
+                break
+            await throttler.handle_chunk(chunk)
+
+        full_reply_text = await throttler.finalize()
+    except Exception as e:
+        logger.error(f"Regeneration error: {e}")
+        err_key = get_user_friendly_error_key({"error": str(e)})
+        friendly_error = get_text(err_key, lang_code=lang_code)
+        if friendly_error == err_key or not friendly_error:
+            raw_err = str(e)[:500]
+            friendly_error = (
+                f"⚠️ Ошибка генерации ответа:\n{raw_err}"
+                if lang_code == "ru"
+                else f"⚠️ Generation error:\n{raw_err}"
+            )
+        await safe_edit_message_text(callback.message, friendly_error)
+        return
+    finally:
+        active_streams.pop(chat_id, None)
+
+    # Save regenerated assistant message to DB
+    if full_reply_text and full_reply_text.strip():
+        async with async_session_maker() as session:
+            conv_repo = ConversationRepository(session)
+            await conv_repo.add_message(
+                user_id=user_id,
+                dialog_id=active_dialog_id,
+                role="bot",
+                message_text=full_reply_text,
+                fernet_instance=fernet,
+            )
+

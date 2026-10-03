@@ -15,6 +15,7 @@ from database.repositories import UserRepository
 from services.gemini import GeminiService
 from keyboards.inline import (
     get_settings_keyboard,
+    get_thinking_budget_keyboard,
     get_models_keyboard,
     get_styles_keyboard,
     get_personas_keyboard,
@@ -50,6 +51,9 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     cur_persona = persona_dict.get("name_ru", "🤖 Обычный") if lang_code == "ru" else persona_dict.get("name_en", "🤖 Normal")
     cur_format = getattr(user, "message_format", "rich") or "rich"
     cur_header = getattr(user, "header_style", "blockquote") or "blockquote"
+    cur_budget = getattr(user, "thinking_budget", 1024)
+    if cur_budget is None:
+        cur_budget = 1024
 
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
@@ -61,11 +65,20 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
             hdr_str = "🚫 Скрыта"
         else:
             hdr_str = "▎ Открытая цитата"
+
+        if cur_budget == 0:
+            thinking_str = "⚡ Мгновенно (0)"
+        elif cur_budget == 4096:
+            thinking_str = "🔬 Глубокий анализ (4096)"
+        else:
+            thinking_str = "⚖️ Баланс (1024)"
+
         text = (
             "⚙️ <b>Настройки AI-ассистента:</b>\n\n"
             f"• <b>Модель:</b> <code>{cur_model}</code>\n"
             f"• <b>Персона:</b> {cur_persona}\n"
             f"• <b>Стиль:</b> {cur_style}\n"
+            f"• <b>Размышления:</b> {thinking_str}\n"
             f"• <b>Формат:</b> {fmt_str}\n"
             f"• <b>Шапка:</b> {hdr_str}\n"
             f"• <b>Язык:</b> {lang_str}\n"
@@ -82,11 +95,20 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
             hdr_str = "🚫 Hidden"
         else:
             hdr_str = "▎ Standard quote"
+
+        if cur_budget == 0:
+            thinking_str = "⚡ Instant (0)"
+        elif cur_budget == 4096:
+            thinking_str = "🔬 Deep Analysis (4096)"
+        else:
+            thinking_str = "⚖️ Balanced (1024)"
+
         text = (
             "⚙️ <b>AI Assistant Settings:</b>\n\n"
             f"• <b>Model:</b> <code>{cur_model}</code>\n"
             f"• <b>Persona:</b> {cur_persona}\n"
             f"• <b>Style:</b> {cur_style}\n"
+            f"• <b>Thinking Budget:</b> {thinking_str}\n"
             f"• <b>Format:</b> {fmt_str}\n"
             f"• <b>Header:</b> {hdr_str}\n"
             f"• <b>Language:</b> {lang_str}\n"
@@ -102,6 +124,7 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         lang_code=lang_code,
         current_format=cur_format,
         current_header_style=cur_header,
+        current_thinking_budget=cur_budget,
     )
     return text, keyboard
 
@@ -291,6 +314,71 @@ async def handle_set_header_style(callback: CallbackQuery):
             "hidden": "🚫 Hidden Header",
         }
         ans_text = f"Header: {names.get(new_style, new_style)}"
+
+    await safe_answer_callback(callback, text=ans_text)
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_thinking")
+async def handle_settings_thinking(callback: CallbackQuery):
+    """Renders thinking budget selection view."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_budget = getattr(user, "thinking_budget", 1024)
+        if cur_budget is None:
+            cur_budget = 1024
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        title = (
+            "🧠 <b>Бюджет размышлений (Thinking Budget):</b>\n\n"
+            "Настройка времени и глубины рассуждений модели (Gemini 2.5 Flash / Pro):\n\n"
+            "• <b>⚡ 0 (Мгновенно):</b> Отключение размышлений для максимально быстрых ответов.\n"
+            "• <b>⚖️ 1024 (Баланс):</b> Оптимальный баланс между скоростью и логической проработкой.\n"
+            "• <b>🔬 4096 (Глубокий анализ):</b> Максимальная глубина для сложного кода, математики и анализа.\n\n"
+            "Выберите желаемый режим:"
+        )
+    else:
+        title = (
+            "🧠 <b>Thinking Budget:</b>\n\n"
+            "Configure model reasoning depth and token budget (Gemini 2.5 Flash / Pro):\n\n"
+            "• <b>⚡ 0 (Instant):</b> Disable reasoning for immediate responses.\n"
+            "• <b>⚖️ 1024 (Balanced):</b> Optimal balance between response speed and logical reasoning.\n"
+            "• <b>🔬 4096 (Deep Analysis):</b> Maximum depth for complex coding, math, and analysis.\n\n"
+            "Select desired mode:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        title,
+        reply_markup=get_thinking_budget_keyboard(current_budget=cur_budget, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("set_thinking:"))
+async def handle_set_thinking(callback: CallbackQuery):
+    """Updates thinking budget in DB and refreshes settings view."""
+    user_id = callback.from_user.id
+    try:
+        val = int(callback.data.split("set_thinking:")[1])
+    except (IndexError, ValueError):
+        val = 1024
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_thinking_budget(user_id=user_id, budget=val)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        ans_text = f"Бюджет размышлений: {val} токенов" if val > 0 else "Размышления отключены (0)"
+    else:
+        ans_text = f"Thinking budget set to {val} tokens" if val > 0 else "Thinking disabled (0)"
 
     await safe_answer_callback(callback, text=ans_text)
     text, keyboard = await render_settings_view(user_id)

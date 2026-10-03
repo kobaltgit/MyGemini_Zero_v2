@@ -18,7 +18,7 @@ import re
 from typing import Optional, List, Tuple
 from aiohttp import ClientError
 from aiogram import Bot
-from aiogram.types import Message, InputRichMessage
+from aiogram.types import Message, InputRichMessage, InlineKeyboardMarkup
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter, TelegramNetworkError
 import telegramify_markdown
 from tg_rich_converter import to_rich, split_rich_message
@@ -64,6 +64,8 @@ class MessageStreamThrottler:
         thinking_summary: str = "Размышления",
         header_style: str = "blockquote",
         header_summary: str = "",
+        stop_keyboard: Optional[InlineKeyboardMarkup] = None,
+        quick_actions_keyboard: Optional[InlineKeyboardMarkup] = None,
     ):
         self.bot = bot
         self.chat_id = chat_id
@@ -73,6 +75,9 @@ class MessageStreamThrottler:
         self.message_format = message_format or getattr(settings, "DEFAULT_MESSAGE_FORMAT", "rich")
         self.thinking_summary = thinking_summary
         self.header_style = header_style or "blockquote"
+        self.stop_keyboard = stop_keyboard
+        self.quick_actions_keyboard = quick_actions_keyboard
+        self.is_aborted: bool = False
 
         if throttle_interval is not None:
             self.throttle_interval = throttle_interval
@@ -87,8 +92,14 @@ class MessageStreamThrottler:
         self.completed_messages: List[Message] = []
         self._last_rendered_html: str = ""
 
+    def abort(self) -> None:
+        """Flags the throttler as aborted, stopping any subsequent updates."""
+        self.is_aborted = True
+
     async def handle_chunk(self, chunk: str) -> None:
         """Appends a new streaming text chunk and checks throttle/split conditions."""
+        if self.is_aborted:
+            return
         self.full_response_text += chunk
         self.current_chunk_text += chunk
 
@@ -107,7 +118,11 @@ class MessageStreamThrottler:
             await self._update_telegram_message(is_final=False)
             self.last_update_time = now
 
-    async def _update_telegram_message(self, is_final: bool = False) -> None:
+    async def _update_telegram_message(
+        self,
+        is_final: bool = False,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+    ) -> None:
         """Edits active Telegram message with buffered text in chosen format."""
         chunk_content = self.current_chunk_text.strip()
         if not chunk_content and not self.header_text:
@@ -116,12 +131,23 @@ class MessageStreamThrottler:
         prefix = self.header_text if not self.completed_messages else ""
         raw_text = f"{prefix}{chunk_content}" if chunk_content else prefix.strip()
 
-        if self.message_format == "rich":
-            await self._update_rich_message(raw_text, is_final=is_final)
-        else:
-            await self._update_legacy_message(raw_text, is_final=is_final)
+        target_markup = (
+            reply_markup
+            if reply_markup is not None
+            else (self.quick_actions_keyboard if is_final else self.stop_keyboard)
+        )
 
-    async def _update_rich_message(self, raw_text: str, is_final: bool) -> None:
+        if self.message_format == "rich":
+            await self._update_rich_message(raw_text, is_final=is_final, reply_markup=target_markup)
+        else:
+            await self._update_legacy_message(raw_text, is_final=is_final, reply_markup=target_markup)
+
+    async def _update_rich_message(
+        self,
+        raw_text: str,
+        is_final: bool,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+    ) -> None:
         """Renders and edits message using tg-rich-converter Rich Messages (10.1+)."""
         streaming_mode = not is_final
         rich_html = to_rich(
@@ -151,14 +177,18 @@ class MessageStreamThrottler:
         if not rich_html or (streaming_mode and rich_html == self._last_rendered_html):
             return
 
+        edit_kwargs: dict = {
+            "chat_id": self.chat_id,
+            "message_id": self.current_message.message_id,
+            "rich_message": InputRichMessage(html=rich_html),
+        }
+        if reply_markup is not None or self.stop_keyboard is not None or self.quick_actions_keyboard is not None:
+            edit_kwargs["reply_markup"] = reply_markup
+
         max_attempts = 4 if is_final else 1
         for attempt in range(1, max_attempts + 1):
             try:
-                await self.bot.edit_message_text(
-                    chat_id=self.chat_id,
-                    message_id=self.current_message.message_id,
-                    rich_message=InputRichMessage(html=rich_html),
-                )
+                await self.bot.edit_message_text(**edit_kwargs)
                 self._last_rendered_html = rich_html
                 return
             except TelegramRetryAfter as e:
@@ -176,13 +206,16 @@ class MessageStreamThrottler:
                     return
                 elif "can't parse entities" in err or "tag" in err or "unsupported" in err or "rich" in err:
                     logger.warning(f"Entity parse error in rich edit, attempting cascade plain text fallback: {e}")
+                    fallback_kwargs: dict = {
+                        "chat_id": self.chat_id,
+                        "message_id": self.current_message.message_id,
+                        "text": raw_text,
+                        "parse_mode": None,
+                    }
+                    if reply_markup is not None or self.stop_keyboard is not None or self.quick_actions_keyboard is not None:
+                        fallback_kwargs["reply_markup"] = reply_markup
                     try:
-                        await self.bot.edit_message_text(
-                            chat_id=self.chat_id,
-                            message_id=self.current_message.message_id,
-                            text=raw_text,
-                            parse_mode=None,
-                        )
+                        await self.bot.edit_message_text(**fallback_kwargs)
                         return
                     except Exception as cascade_err:
                         logger.warning(f"Cascade plain text edit also failed: {cascade_err}")
@@ -217,16 +250,24 @@ class MessageStreamThrottler:
         # If finalizing and all edit attempts failed (e.g. permanent network/message issue), ensure delivery via send_message
         if is_final:
             logger.warning("All rich edit attempts failed on finalize. Falling back to sending a new message.")
+            send_kwargs: dict = {
+                "chat_id": self.chat_id,
+                "text": raw_text,
+                "parse_mode": None,
+            }
+            if reply_markup is not None or self.stop_keyboard is not None or self.quick_actions_keyboard is not None:
+                send_kwargs["reply_markup"] = reply_markup
             try:
-                self.current_message = await self.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=raw_text,
-                    parse_mode=None,
-                )
+                self.current_message = await self.bot.send_message(**send_kwargs)
             except Exception as send_err:
                 logger.error(f"Final fallback send_message also failed: {send_err}")
 
-    async def _update_legacy_message(self, raw_text: str, is_final: bool) -> None:
+    async def _update_legacy_message(
+        self,
+        raw_text: str,
+        is_final: bool,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+    ) -> None:
         """Edits message using classic MarkdownV2 / plain text."""
         display_text = raw_text if is_final else f"{raw_text} ▌"
         formatted_text, parse_mode = format_markdown_safe(display_text)
@@ -250,15 +291,19 @@ class MessageStreamThrottler:
                     rest = "\n".join(other_lines)
                     formatted_text = f"||{joined_quote}||\n\n{rest}" if rest else f"||{joined_quote}||"
 
+        edit_kwargs: dict = {
+            "chat_id": self.chat_id,
+            "message_id": self.current_message.message_id,
+            "text": formatted_text,
+            "parse_mode": parse_mode,
+        }
+        if reply_markup is not None or self.stop_keyboard is not None or self.quick_actions_keyboard is not None:
+            edit_kwargs["reply_markup"] = reply_markup
+
         max_attempts = 4 if is_final else 1
         for attempt in range(1, max_attempts + 1):
             try:
-                await self.bot.edit_message_text(
-                    chat_id=self.chat_id,
-                    message_id=self.current_message.message_id,
-                    text=formatted_text,
-                    parse_mode=parse_mode,
-                )
+                await self.bot.edit_message_text(**edit_kwargs)
                 return
             except TelegramRetryAfter as e:
                 logger.warning(f"Telegram FloodWait during stream ({e.retry_after}s). Sleeping...")
@@ -273,13 +318,16 @@ class MessageStreamThrottler:
                 if "message is not modified" in err:
                     return
                 elif "can't parse entities" in err or "tag" in err:
+                    fallback_kwargs: dict = {
+                        "chat_id": self.chat_id,
+                        "message_id": self.current_message.message_id,
+                        "text": display_text,
+                        "parse_mode": None,
+                    }
+                    if reply_markup is not None or self.stop_keyboard is not None or self.quick_actions_keyboard is not None:
+                        fallback_kwargs["reply_markup"] = reply_markup
                     try:
-                        await self.bot.edit_message_text(
-                            chat_id=self.chat_id,
-                            message_id=self.current_message.message_id,
-                            text=display_text,
-                            parse_mode=None,
-                        )
+                        await self.bot.edit_message_text(**fallback_kwargs)
                         return
                     except Exception as cascade_err:
                         logger.warning(f"Legacy cascade plain edit failed: {cascade_err}")
@@ -314,12 +362,15 @@ class MessageStreamThrottler:
         # If finalizing and all legacy edit attempts failed, ensure delivery via send_message
         if is_final:
             logger.warning("All legacy edit attempts failed on finalize. Falling back to sending a new message.")
+            send_kwargs: dict = {
+                "chat_id": self.chat_id,
+                "text": display_text,
+                "parse_mode": None,
+            }
+            if reply_markup is not None or self.stop_keyboard is not None or self.quick_actions_keyboard is not None:
+                send_kwargs["reply_markup"] = reply_markup
             try:
-                self.current_message = await self.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=display_text,
-                    parse_mode=None,
-                )
+                self.current_message = await self.bot.send_message(**send_kwargs)
             except Exception as send_err:
                 logger.error(f"Legacy final fallback send_message failed: {send_err}")
 
@@ -353,53 +404,71 @@ class MessageStreamThrottler:
         to_finalize = text[:split_index]
         remaining = text[split_index:]
 
-        # Finalize current message
+        # Finalize current message (remove stop_keyboard)
         self.current_chunk_text = to_finalize
-        await self._update_telegram_message(is_final=True)
+        await self._update_telegram_message(is_final=True, reply_markup=None)
         self.completed_messages.append(self.current_message)
 
         # Start new message for remaining portion
         self.current_chunk_text = remaining
         self._last_rendered_html = ""
 
+        split_markup = self.stop_keyboard
         if self.message_format == "rich":
             initial_html = to_rich(
                 remaining if remaining else "...",
                 thinking_summary=self.thinking_summary,
                 streaming=True,
             )
+            send_kwargs: dict = {
+                "chat_id": self.chat_id,
+                "rich_message": InputRichMessage(html=initial_html),
+            }
+            if split_markup is not None:
+                send_kwargs["reply_markup"] = split_markup
             try:
-                self.current_message = await self.bot.send_rich_message(
-                    chat_id=self.chat_id,
-                    rich_message=InputRichMessage(html=initial_html),
-                )
+                self.current_message = await self.bot.send_rich_message(**send_kwargs)
             except Exception as e:
                 logger.warning(f"Failed to send_rich_message on split, fallback to send_message: {e}")
-                self.current_message = await self.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=remaining if remaining else "...",
-                    parse_mode="HTML",
-                )
+                fallback_kwargs: dict = {
+                    "chat_id": self.chat_id,
+                    "text": remaining if remaining else "...",
+                    "parse_mode": "HTML",
+                }
+                if split_markup is not None:
+                    fallback_kwargs["reply_markup"] = split_markup
+                self.current_message = await self.bot.send_message(**fallback_kwargs)
         else:
             new_text, parse_mode = format_markdown_safe(
                 remaining + " ▌" if remaining else "..."
             )
+            send_kwargs = {
+                "chat_id": self.chat_id,
+                "text": new_text,
+                "parse_mode": parse_mode,
+            }
+            if split_markup is not None:
+                send_kwargs["reply_markup"] = split_markup
             try:
-                self.current_message = await self.bot.send_message(
-                    chat_id=self.chat_id,
-                    text=new_text,
-                    parse_mode=parse_mode,
-                )
+                self.current_message = await self.bot.send_message(**send_kwargs)
             except Exception as e:
                 logger.error(f"Error sending next legacy chunk message: {e}")
 
         self.last_update_time = time.monotonic()
 
-    async def finalize(self) -> str:
+    async def finalize(
+        self, quick_actions_keyboard: Optional[InlineKeyboardMarkup] = None
+    ) -> str:
         """
         Finalizes streaming: renders final message frame (streaming=False)
-        without balancer or typing cursors, and returns complete raw markdown for history.
+        without balancer or typing cursors, attaches quick actions keyboard (if provided),
+        and returns complete raw markdown for history.
         """
-        await self._update_telegram_message(is_final=True)
+        final_markup = (
+            quick_actions_keyboard
+            if quick_actions_keyboard is not None
+            else self.quick_actions_keyboard
+        )
+        await self._update_telegram_message(is_final=True, reply_markup=final_markup)
         self.completed_messages.append(self.current_message)
         return self.full_response_text

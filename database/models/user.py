@@ -31,6 +31,7 @@ class User(Base):
     active_persona: Mapped[str] = mapped_column(String, default="default", nullable=False)
     message_format: Mapped[str] = mapped_column(String, default="rich", nullable=False)
     header_style: Mapped[str] = mapped_column(String, default="blockquote", nullable=False)
+    thinking_budget: Mapped[int] = mapped_column(Integer, default=1024, nullable=False)
 
     # Zero-Knowledge Security Fields (BLOB)
     master_password_hash: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
