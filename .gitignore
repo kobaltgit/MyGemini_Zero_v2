@@ -2,17 +2,29 @@
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*secret*.json
+credentials*.json
+service_account*.json
 
 # --- Databases & Vector Storage ---
 database/*.db
 database/*.db-shm
 database/*.db-wal
 *.db
+*.sqlite
+*.sqlite3
 vector_store/
+chroma_data/
 
 # --- Logs & Runtime Data ---
 logs/
 *.log
+*.pid
 
 # --- Python & Environments ---
 __pycache__/
