@@ -296,3 +296,22 @@
   - [x] 11 новых тестов в `tests/test_ui_phase2.py`
   - [x] Успешное прохождение всех 129 тестов (129/129 pass, 100% success)
 
+---
+
+## 18. Верификация песочницы, многоуровневый 429-фолбэк и сноска о переключении моделей (Вариант Б)
+- [x] Захват вывода песочницы Python (`executable_code` и `code_execution_result`) в `services/gemini.py`
+- [x] Жесткая системная директива обязательного исполнения Python для вычислений в `handlers/chat.py`
+- [x] Многоуровневый каскад фолбэка (Multi-tier 429 Fallback) в `services/gemini.py`:
+  - [x] Уровень 1: при 429 на флагманах переключение на `gemini-2.5-flash` с сохранением песочницы и поиска
+  - [x] Уровень 2: аварийный переход на `gemini-2.5-flash-lite` без инструментов при исчерпании лимитов 2.5-flash
+- [x] Прозрачная сноска о смене модели под сообщением (Вариант Б):
+  - [x] Фиксация `fallback_model` в `GeminiService`
+  - [x] Метод `set_fallback_notice()` в `MessageStreamThrottler` (`services/throttler.py`)
+  - [x] Автоматическое добавление курсивной сноски перед кнопками быстрых действий в `handlers/chat.py`
+  - [x] Сохранение чистого ответа модели в БД без замусоривания истории диалога
+- [x] Полное покрытие тестами:
+  - [x] Тест отслеживания `fallback_model` в `tests/test_services.py` (`TestGeminiQuotaFallback`)
+  - [x] Тест отображения сноски в `tests/test_throttler.py` (`test_throttler_fallback_notice_footnote`)
+  - [x] Успешное прохождение всех 131 тестов (131/131 pass, 100% success)
+
+

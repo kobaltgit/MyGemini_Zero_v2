@@ -76,6 +76,7 @@ class GeminiService:
         self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
         self.last_usage_metadata: Optional[Dict[str, int]] = None
+        self.fallback_model: Optional[str] = None
 
     async def get_available_models(self) -> List[Dict[str, Any]]:
         """
@@ -158,6 +159,7 @@ class GeminiService:
         Asynchronous streaming generation with automatic Google Search and Code Execution tool grounding,
         thinking budget configuration, tool unsupported fallback, and 429 quota handling.
         """
+        self.fallback_model = None
         if contents is None and prompt is not None:
             contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
         elif contents is None:
@@ -250,6 +252,7 @@ class GeminiService:
                             contents=contents,
                             config=fallback_flash_config,
                         )
+                        self.fallback_model = "gemini-2.5-flash"
                         async for chunk in stream:
                             if getattr(chunk, "usage_metadata", None):
                                 self.last_usage_metadata = {
@@ -265,6 +268,7 @@ class GeminiService:
                         return
                     except APIError as flash_err:
                         logger.warning(f"Fallback to gemini-2.5-flash failed ({flash_err.code}). Trying lite...")
+                        self.fallback_model = None
 
                 # Tier 2: Emergency fallback to gemini-2.5-flash-lite (pure text without tools)
                 if model_id != "gemini-2.5-flash-lite":
@@ -279,6 +283,7 @@ class GeminiService:
                         contents=contents,
                         config=fallback_config,
                     )
+                    self.fallback_model = "gemini-2.5-flash-lite"
                     async for chunk in stream:
                         if getattr(chunk, "usage_metadata", None):
                             self.last_usage_metadata = {

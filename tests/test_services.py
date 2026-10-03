@@ -217,3 +217,40 @@ class TestGeminiServiceThinkingBudget:
             call_config_lite = mock_gen.call_args.kwargs["config"]
             assert call_config_lite.thinking_config is None
 
+
+@pytest.mark.asyncio
+class TestGeminiQuotaFallback:
+    """Tests for 429 quota fallback tracking in GeminiService."""
+
+    async def test_fallback_model_set_on_primary_fallback(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from google.genai.errors import APIError
+        from services.gemini import GeminiService
+
+        service = GeminiService(api_key="fake-test-key")
+        assert service.fallback_model is None
+
+        # First call fails with 429 RESOURCE_EXHAUSTED
+        quota_err = APIError(429, "RESOURCE_EXHAUSTED: quota exceeded")
+
+        # Fallback stream succeeds
+        fallback_stream = AsyncMock()
+        fallback_chunk = MagicMock()
+        fallback_chunk.text = "Response from fallback"
+        fallback_stream.__aiter__.return_value = [fallback_chunk]
+
+        with patch.object(service.client.aio.models, "generate_content_stream", side_effect=[quota_err, fallback_stream]) as mock_gen:
+            chunks = []
+            async for c in service.generate_stream(
+                model_id="gemini-3.5-flash",
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text="Calculate")])],
+            ):
+                chunks.append(c)
+
+            assert chunks == ["Response from fallback"]
+            assert service.fallback_model == "gemini-2.5-flash"
+            assert mock_gen.await_count == 2
+            # Second call was with gemini-2.5-flash
+            assert mock_gen.call_args_list[1].kwargs["model"] == "gemini-2.5-flash"
+
+

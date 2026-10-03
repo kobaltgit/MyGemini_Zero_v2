@@ -300,4 +300,34 @@ class TestThrottlerAbortAndKeyboards:
         final_call_kwargs = bot.edit_message_text.call_args.kwargs
         assert final_call_kwargs.get("reply_markup") == quick_kb
 
+    async def test_throttler_fallback_notice_footnote(self):
+        bot = MagicMock(spec=Bot)
+        bot.edit_message_text = AsyncMock()
+
+        msg = MagicMock(spec=Message)
+        msg.message_id = 9933
+
+        throttler = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=msg,
+            throttle_interval=0.01,
+            message_format="markdown",
+        )
+
+        await throttler.handle_chunk("Main answer text.")
+        notice = "_ℹ️ Ответ сгенерирован на gemini-2.5-flash (квота gemini-3.5-flash временно исчерпана)._"
+        throttler.set_fallback_notice(notice)
+
+        final_raw_text = await throttler.finalize()
+        # Full response text in DB remains clean
+        assert final_raw_text == "Main answer text."
+        # But displayed text sent to Telegram contains the footnote
+        assert bot.edit_message_text.await_count >= 1
+        last_kwargs = bot.edit_message_text.call_args.kwargs
+        edited_text = last_kwargs.get("text", "")
+        assert "Ответ сгенерирован" in edited_text
+        assert "gemini" in edited_text
+
+
 

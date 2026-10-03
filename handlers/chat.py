@@ -502,6 +502,15 @@ async def handle_user_message(message: Message, bot: Bot):
                 meta.get("total_tokens", 0),
             )
 
+        if getattr(gemini_service, "fallback_model", None):
+            fallback_model = gemini_service.fallback_model
+            fallback_msg = (
+                f"_ℹ️ Ответ сгенерирован на {fallback_model} (квота {model_id} временно исчерпана)._"
+                if lang_code == "ru" else
+                f"_ℹ️ Generated using {fallback_model} ({model_id} quota temporarily exceeded)._"
+            )
+            throttler.set_fallback_notice(fallback_msg)
+
         full_reply_text = await throttler.finalize()
 
     except Exception as e:
@@ -851,6 +860,15 @@ async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
                 meta.get("candidates_tokens", 0),
                 meta.get("total_tokens", 0),
             )
+
+        if getattr(gemini_service, "fallback_model", None):
+            fallback_model = gemini_service.fallback_model
+            fallback_msg = (
+                f"_ℹ️ Ответ сгенерирован на {fallback_model} (квота {model_id} временно исчерпана)._"
+                if lang_code == "ru" else
+                f"_ℹ️ Generated using {fallback_model} ({model_id} quota temporarily exceeded)._"
+            )
+            throttler.set_fallback_notice(fallback_msg)
 
         full_reply_text = await throttler.finalize()
     except Exception as e:

@@ -78,6 +78,7 @@ class MessageStreamThrottler:
         self.stop_keyboard = stop_keyboard
         self.quick_actions_keyboard = quick_actions_keyboard
         self.is_aborted: bool = False
+        self.fallback_notice: Optional[str] = None
 
         self.start_time: float = time.monotonic()
         self.elapsed_time: Optional[float] = None
@@ -143,6 +144,10 @@ class MessageStreamThrottler:
     def abort(self) -> None:
         """Flags the throttler as aborted, stopping any subsequent updates."""
         self.is_aborted = True
+
+    def set_fallback_notice(self, notice: str) -> None:
+        """Sets an informational footnote notice (e.g. model fallback notification)."""
+        self.fallback_notice = notice
 
     async def handle_chunk(self, chunk: str) -> None:
         """Appends a new streaming text chunk and checks throttle/split conditions."""
@@ -533,6 +538,13 @@ class MessageStreamThrottler:
                     self.current_chunk_text += f"\n\n> {hud_line}"
                 else:
                     self.current_chunk_text = f"> {hud_line}"
+
+        if self.fallback_notice:
+            notice = self.fallback_notice.strip()
+            if self.current_chunk_text.strip():
+                self.current_chunk_text += f"\n\n{notice}"
+            else:
+                self.current_chunk_text = notice
 
         final_markup = (
             quick_actions_keyboard
