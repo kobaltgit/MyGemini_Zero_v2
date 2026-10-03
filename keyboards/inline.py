@@ -92,19 +92,35 @@ def get_set_password_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_chat_quick_actions_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
+def get_chat_quick_actions_keyboard(
+    lang_code: str = "ru", enable_code_execution: bool = False
+) -> InlineKeyboardMarkup:
     """Builds quick action buttons attached to completed assistant response."""
     regen_text = "🔄 Еще раз" if lang_code == "ru" else "🔄 Regenerate"
     undo_text = "↩️ Откатить шаг" if lang_code == "ru" else "↩️ Undo turn"
+    sandbox_text = "🐍 В песочницу" if lang_code == "ru" else "🐍 To Sandbox"
     export_text = "📥 Экспорт диалога" if lang_code == "ru" else "📥 Export Dialogue"
+
+    row2 = []
+    if enable_code_execution:
+        row2.append(InlineKeyboardButton(text=sandbox_text, callback_data="chat_action:sandbox"))
+    row2.append(InlineKeyboardButton(text=export_text, callback_data="chat_action:export"))
+
     buttons = [
         [
             InlineKeyboardButton(text=regen_text, callback_data="chat_action:regen"),
             InlineKeyboardButton(text=undo_text, callback_data="chat_action:undo"),
         ],
-        [
-            InlineKeyboardButton(text=export_text, callback_data="chat_action:export"),
-        ],
+        row2,
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_sandbox_cancel_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds cancel button for dedicated Python sandbox prompt mode."""
+    cancel_text = "❌ Отмена" if lang_code == "ru" else "❌ Cancel"
+    buttons = [
+        [InlineKeyboardButton(text=cancel_text, callback_data="chat_action:sandbox_cancel")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

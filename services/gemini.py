@@ -246,6 +246,7 @@ class GeminiService:
                             max_output_tokens=max_output_tokens,
                             system_instruction=system_instruction,
                             tools=tools_config,
+                            thinking_config=thinking_config,
                         )
                         stream = await self.client.aio.models.generate_content_stream(
                             model="gemini-2.5-flash",

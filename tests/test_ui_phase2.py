@@ -16,6 +16,8 @@ from database.repositories import UserRepository, DialogRepository, Conversation
 from keyboards.inline import (
     get_session_ttl_keyboard,
     get_settings_keyboard,
+    get_chat_quick_actions_keyboard,
+    get_sandbox_cancel_keyboard,
 )
 from handlers.settings import (
     render_settings_view,
@@ -26,6 +28,10 @@ from handlers.settings import (
 from handlers.chat import (
     handle_user_message,
     handle_chat_action_regen,
+    handle_chat_action_sandbox,
+    handle_chat_action_sandbox_cancel,
+    handle_sandbox_prompt,
+    SandboxStates,
     active_streams,
 )
 from middlewares.auth import session_manager
@@ -144,6 +150,39 @@ class TestKeyboardsPhase2(unittest.TestCase):
         self.assertIn("settings_toggle_code_exec", cb_map)
         self.assertEqual(cb_map["settings_ttl"], "⏱️ Session: 8 hours")
         self.assertEqual(cb_map["settings_toggle_code_exec"], "🐍 Python Sandbox: 🟢 On")
+
+    def test_get_chat_quick_actions_keyboard_with_and_without_sandbox(self):
+        """Verifies [🐍 В песочницу] presence based on enable_code_execution parameter."""
+        # When enabled (RU)
+        kb_on_ru = get_chat_quick_actions_keyboard(lang_code="ru", enable_code_execution=True)
+        cb_map_on_ru = {b.callback_data: b.text for row in kb_on_ru.inline_keyboard for b in row}
+        self.assertIn("chat_action:sandbox", cb_map_on_ru)
+        self.assertEqual(cb_map_on_ru["chat_action:sandbox"], "🐍 В песочницу")
+        self.assertIn("chat_action:regen", cb_map_on_ru)
+        self.assertIn("chat_action:undo", cb_map_on_ru)
+        self.assertIn("chat_action:export", cb_map_on_ru)
+
+        # When disabled (RU)
+        kb_off_ru = get_chat_quick_actions_keyboard(lang_code="ru", enable_code_execution=False)
+        cb_map_off_ru = {b.callback_data: b.text for row in kb_off_ru.inline_keyboard for b in row}
+        self.assertNotIn("chat_action:sandbox", cb_map_off_ru)
+        self.assertIn("chat_action:export", cb_map_off_ru)
+
+        # When enabled (EN)
+        kb_on_en = get_chat_quick_actions_keyboard(lang_code="en", enable_code_execution=True)
+        cb_map_on_en = {b.callback_data: b.text for row in kb_on_en.inline_keyboard for b in row}
+        self.assertIn("chat_action:sandbox", cb_map_on_en)
+        self.assertEqual(cb_map_on_en["chat_action:sandbox"], "🐍 To Sandbox")
+
+    def test_get_sandbox_cancel_keyboard(self):
+        """Verifies sandbox cancel keyboard button and callback."""
+        kb_ru = get_sandbox_cancel_keyboard(lang_code="ru")
+        self.assertEqual(kb_ru.inline_keyboard[0][0].text, "❌ Отмена")
+        self.assertEqual(kb_ru.inline_keyboard[0][0].callback_data, "chat_action:sandbox_cancel")
+
+        kb_en = get_sandbox_cancel_keyboard(lang_code="en")
+        self.assertEqual(kb_en.inline_keyboard[0][0].text, "❌ Cancel")
+        self.assertEqual(kb_en.inline_keyboard[0][0].callback_data, "chat_action:sandbox_cancel")
 
 
 class TestSettingsHandlersPhase2(unittest.IsolatedAsyncioTestCase):
@@ -442,3 +481,133 @@ class TestChatCodeExecutionPhase2(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("enable_code_execution", captured_kwargs)
         self.assertTrue(captured_kwargs["enable_code_execution"])
+
+    async def test_handle_chat_action_sandbox_sets_state_and_sends_intro(self):
+        """Verifies chat_action:sandbox sets FSM state and sends explanatory card."""
+        from aiogram.fsm.context import FSMContext
+        from aiogram.fsm.storage.memory import MemoryStorage
+        from aiogram.fsm.storage.base import StorageKey
+
+        storage = MemoryStorage()
+        key = StorageKey(bot_id=12345, chat_id=112233, user_id=self.user_id)
+        state = FSMContext(storage=storage, key=key)
+
+        cb_msg = MagicMock(spec=Message)
+        cb_msg.answer = AsyncMock()
+        cb = MagicMock(spec=CallbackQuery)
+        cb.from_user = TgUser(id=self.user_id, is_bot=False, first_name="SandboxUser", language_code="ru")
+        cb.message = cb_msg
+        cb.answer = AsyncMock()
+
+        await handle_chat_action_sandbox(cb, state=state)
+
+        current_state = await state.get_state()
+        self.assertEqual(current_state, SandboxStates.waiting_for_sandbox_prompt.state)
+        cb_msg.answer.assert_awaited_once()
+        answer_text = cb_msg.answer.call_args[0][0]
+        self.assertIn("Песочница Python", answer_text)
+        self.assertIn("Изолированные вычисления", answer_text)
+
+    async def test_handle_chat_action_sandbox_cancel_clears_state(self):
+        """Verifies chat_action:sandbox_cancel clears state and edits message."""
+        from aiogram.fsm.context import FSMContext
+        from aiogram.fsm.storage.memory import MemoryStorage
+        from aiogram.fsm.storage.base import StorageKey
+
+        storage = MemoryStorage()
+        key = StorageKey(bot_id=12345, chat_id=112233, user_id=self.user_id)
+        state = FSMContext(storage=storage, key=key)
+        await state.set_state(SandboxStates.waiting_for_sandbox_prompt)
+
+        cb_msg = MagicMock(spec=Message)
+        cb_msg.edit_text = AsyncMock()
+        cb = MagicMock(spec=CallbackQuery)
+        cb.from_user = TgUser(id=self.user_id, is_bot=False, first_name="SandboxUser", language_code="ru")
+        cb.message = cb_msg
+        cb.answer = AsyncMock()
+
+        await handle_chat_action_sandbox_cancel(cb, state=state)
+
+        current_state = await state.get_state()
+        self.assertIsNone(current_state)
+        cb_msg.edit_text.assert_awaited_once()
+        edited_text = cb_msg.edit_text.call_args.kwargs.get("text") or (cb_msg.edit_text.call_args[0][0] if cb_msg.edit_text.call_args[0] else "")
+        self.assertIn("отменён", edited_text)
+
+    @patch("handlers.chat.GeminiService")
+    async def test_handle_sandbox_prompt_runs_isolated_and_saves_to_dialog(self, mock_gemini_class):
+        """Verifies handle_sandbox_prompt executes isolated prompt and saves both QA messages to active dialog."""
+        from aiogram.fsm.context import FSMContext
+        from aiogram.fsm.storage.memory import MemoryStorage
+        from aiogram.fsm.storage.base import StorageKey
+
+        storage = MemoryStorage()
+        key = StorageKey(bot_id=12345, chat_id=112233, user_id=self.user_id)
+        state = FSMContext(storage=storage, key=key)
+        await state.set_state(SandboxStates.waiting_for_sandbox_prompt)
+
+        async with async_session_maker() as session:
+            dlg_repo = DialogRepository(session)
+            dlg = await dlg_repo.create_dialog(self.user_id, "Isolated Math Topic", set_active=True)
+            active_dlg_id = dlg.dialog_id
+
+        await state.update_data(active_dialog_id=active_dlg_id)
+
+        captured_kwargs = {}
+        mock_gemini_inst = MagicMock()
+
+        class MockChunk(str):
+            pass
+
+        chunk = MockChunk("Answer: 563689")
+        meta = MagicMock()
+        meta.prompt_token_count = 10
+        meta.candidates_token_count = 5
+        meta.total_token_count = 15
+        chunk.usage_metadata = meta
+
+        async def fake_stream(*args, **kwargs):
+            nonlocal captured_kwargs
+            captured_kwargs = kwargs
+            yield chunk
+
+        mock_gemini_inst.generate_stream = fake_stream
+        mock_gemini_class.return_value = mock_gemini_inst
+
+        bot_mock = MagicMock()
+        placeholder = MagicMock(spec=Message)
+        placeholder.message_id = 4455
+        bot_mock.edit_message_text = AsyncMock()
+
+        msg = MagicMock(spec=Message)
+        msg.chat = Chat(id=112233, type="private")
+        msg.message_id = 9988
+        msg.text = "Sum of primes from 10000 to 10500"
+        msg.from_user = TgUser(id=self.user_id, is_bot=False, first_name="SandboxTester", language_code="ru")
+        msg.answer = AsyncMock(return_value=placeholder)
+
+        await handle_sandbox_prompt(msg, bot=bot_mock, state=state)
+
+        # 1. State must be cleared
+        current_state = await state.get_state()
+        self.assertIsNone(current_state)
+
+        # 2. Captured kwargs: enable_code_execution=True, enable_search=False
+        self.assertTrue(captured_kwargs.get("enable_code_execution"))
+        self.assertFalse(captured_kwargs.get("enable_search"))
+
+        # 3. Contents passed to gemini must contain ONLY user prompt (zero dialog history)
+        contents = captured_kwargs.get("contents", [])
+        self.assertEqual(len(contents), 1)
+        self.assertEqual(contents[0].parts[0].text, "Sum of primes from 10000 to 10500")
+
+        # 4. Check conversation history in DB contains both prompt and answer
+        async with async_session_maker() as session:
+            conv_repo = ConversationRepository(session)
+            msgs = await conv_repo.get_dialog_messages(active_dlg_id, fernet_instance=self.fernet)
+            self.assertEqual(len(msgs), 2)
+            self.assertEqual(msgs[0]["role"], "user")
+            self.assertEqual(msgs[0]["text"], "Sum of primes from 10000 to 10500")
+            self.assertEqual(msgs[1]["role"], "bot")
+            self.assertIn("563689", msgs[1]["text"])
+
