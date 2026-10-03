@@ -340,7 +340,8 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         call_kwargs = bot.edit_message_text.call_args.kwargs
         rich_msg = call_kwargs.get("rich_message")
         self.assertIsNotNone(rich_msg)
-        self.assertIn("<blockquote expandable>", rich_msg.html)
+        self.assertIn("<details><summary>", rich_msg.html)
+        self.assertIn("<blockquote>", rich_msg.html)
         self.assertIn("<br/>", rich_msg.html)
         self.assertIn("Hello from AI", rich_msg.html)
 

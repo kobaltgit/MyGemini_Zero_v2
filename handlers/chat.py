@@ -414,7 +414,9 @@ async def handle_user_message(message: Message, bot: Bot):
 
     if header_style == "hidden":
         context_header = ""
+        header_summary = ""
     else:
+        header_summary = f"💬 {dialog_title} • ⚡ {model_id}"
         if lang_code == "ru":
             context_header = (
                 f"> 💬 **Диалог:** {dialog_title}\n"
@@ -442,6 +444,7 @@ async def handle_user_message(message: Message, bot: Bot):
         chat_id=message.chat.id,
         initial_message=placeholder_msg,
         header_text=context_header,
+        header_summary=header_summary,
         message_format=user_format,
         thinking_summary=thinking_summary,
         header_style=header_style,

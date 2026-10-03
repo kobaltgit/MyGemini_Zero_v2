@@ -63,11 +63,13 @@ class MessageStreamThrottler:
         message_format: str = "rich",
         thinking_summary: str = "Размышления",
         header_style: str = "blockquote",
+        header_summary: str = "",
     ):
         self.bot = bot
         self.chat_id = chat_id
         self.current_message = initial_message
         self.header_text = header_text
+        self.header_summary = header_summary
         self.message_format = message_format or getattr(settings, "DEFAULT_MESSAGE_FORMAT", "rich")
         self.thinking_summary = thinking_summary
         self.header_style = header_style or "blockquote"
@@ -128,10 +130,6 @@ class MessageStreamThrottler:
             streaming=streaming_mode,
         )
 
-        if not self.completed_messages and self.header_style == "expandable":
-            if rich_html.startswith("<blockquote>"):
-                rich_html = rich_html.replace("<blockquote>", "<blockquote expandable>", 1)
-
         # Ensure line breaks inside <blockquote> are rendered as distinct lines (<br/>)
         if "<blockquote" in rich_html:
             def fix_quote_newlines(match: re.Match) -> str:
@@ -140,6 +138,15 @@ class MessageStreamThrottler:
                 return f"{tag}{body.replace(chr(10), '<br/>')}</blockquote>"
 
             rich_html = re.sub(r"(<blockquote[^>]*>)(.*?)</blockquote>", fix_quote_newlines, rich_html, flags=re.DOTALL)
+
+        # If expandable spoiler mode is chosen, wrap the header blockquote into a collapsible <details> block
+        if not self.completed_messages and self.header_style == "expandable":
+            summary = self.header_summary or "💬 Инфо о диалоге"
+            end_quote = rich_html.find("</blockquote>")
+            if end_quote != -1 and rich_html.startswith("<blockquote>"):
+                quote_block = rich_html[: end_quote + len("</blockquote>")].strip()
+                rest = rich_html[end_quote + len("</blockquote>") :].strip()
+                rich_html = f"<details><summary>{summary}</summary>{quote_block}</details>\n{rest}"
 
         if not rich_html or (streaming_mode and rich_html == self._last_rendered_html):
             return
@@ -238,9 +245,10 @@ class MessageStreamThrottler:
                         in_quote = False
                         other_lines.append(line)
                 if quote_lines:
-                    joined_quote = "\n".join(quote_lines)
+                    clean_lines = [q.lstrip(">").strip() for q in quote_lines]
+                    joined_quote = "\n".join(clean_lines)
                     rest = "\n".join(other_lines)
-                    formatted_text = f"**{joined_quote}**\n\n{rest}" if rest else f"**{joined_quote}**"
+                    formatted_text = f"||{joined_quote}||\n\n{rest}" if rest else f"||{joined_quote}||"
 
         max_attempts = 4 if is_final else 1
         for attempt in range(1, max_attempts + 1):
