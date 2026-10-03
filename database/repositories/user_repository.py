@@ -182,6 +182,13 @@ class UserRepository:
         user = await self.get_by_id(user_id)
         return user is not None and user.api_key is not None
 
+    async def delete_api_key(self, user_id: int) -> None:
+        """Deletes user's API key by setting it to None in DB."""
+        stmt = update(User).where(User.user_id == user_id).values(api_key=None)
+        await self.session.execute(stmt)
+        await self.session.commit()
+        logger.info(f"API key deleted for user {user_id}", extra={"user_id": user_id})
+
     async def update_session_timestamp(self, user_id: int) -> None:
         """Updates last_session_ts to current timestamp."""
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -197,8 +204,13 @@ class UserRepository:
         persona: Optional[str] = None,
         language_code: Optional[str] = None,
         active_dialog_id: Optional[int] = None,
+        message_format: Optional[str] = None,
+        header_style: Optional[str] = None,
+        thinking_budget: Optional[int] = None,
+        session_ttl_minutes: Optional[int] = None,
+        enable_code_execution: Optional[bool] = None,
     ) -> None:
-        """Updates user preferences (model, persona, style, language, active dialog)."""
+        """Updates user preferences (model, persona, style, language, active dialog, message format, header style, thinking budget, session ttl, code execution)."""
         values = {}
         if style is not None:
             values["bot_style"] = style
@@ -210,11 +222,54 @@ class UserRepository:
             values["language_code"] = language_code
         if active_dialog_id is not None:
             values["active_dialog_id"] = active_dialog_id
+        if message_format is not None:
+            values["message_format"] = message_format
+        if header_style is not None:
+            values["header_style"] = header_style
+        if thinking_budget is not None:
+            values["thinking_budget"] = thinking_budget
+        if session_ttl_minutes is not None:
+            values["session_ttl_minutes"] = session_ttl_minutes
+        if enable_code_execution is not None:
+            values["enable_code_execution"] = enable_code_execution
 
         if values:
             stmt = update(User).where(User.user_id == user_id).values(**values)
             await self.session.execute(stmt)
             await self.session.commit()
+
+    async def update_session_ttl(self, user_id: int, ttl_minutes: int) -> None:
+        """Sets session inactivity timeout in minutes."""
+        stmt = update(User).where(User.user_id == user_id).values(session_ttl_minutes=ttl_minutes)
+        await self.session.execute(stmt)
+        await self.session.commit()
+
+    async def toggle_code_execution(self, user_id: int) -> bool:
+        """Toggles Python code execution tool on/off for user and returns new state."""
+        user = await self.get_by_id(user_id)
+        new_state = not (user.enable_code_execution if user else False)
+        stmt = update(User).where(User.user_id == user_id).values(enable_code_execution=new_state)
+        await self.session.execute(stmt)
+        await self.session.commit()
+        return new_state
+
+    async def update_thinking_budget(self, user_id: int, budget: int) -> None:
+        """Sets thinking budget for Gemini 2.5 models."""
+        stmt = update(User).where(User.user_id == user_id).values(thinking_budget=budget)
+        await self.session.execute(stmt)
+        await self.session.commit()
+
+    async def update_message_format(self, user_id: int, message_format: str) -> None:
+        """Sets message formatting mode ('rich' or 'markdown') for user."""
+        stmt = update(User).where(User.user_id == user_id).values(message_format=message_format)
+        await self.session.execute(stmt)
+        await self.session.commit()
+
+    async def update_header_style(self, user_id: int, header_style: str) -> None:
+        """Sets context header style ('blockquote', 'expandable', 'hidden') for user."""
+        stmt = update(User).where(User.user_id == user_id).values(header_style=header_style)
+        await self.session.execute(stmt)
+        await self.session.commit()
 
     async def update_subscription(self, user_id: int, status: str, end_date: Optional[str]) -> None:
         """Updates user subscription status and expiry date."""

@@ -38,7 +38,7 @@ def model_supports_search(model_name: str) -> bool:
 
     no_search_patterns = [
         "-image", "-tts", "-transcribe", "embedding", "aqa", "veo", "lyria",
-        "computer-use", "robotics"
+        "computer-use", "robotics", "-lite"
     ]
     if any(p in clean_name for p in no_search_patterns):
         return False
@@ -62,6 +62,11 @@ class GeminiQuotaExceededException(GeminiAPIException):
     pass
 
 
+class StreamChunk(str):
+    """String subclass that preserves chunk usage metadata."""
+    usage_metadata: Optional[Any] = None
+
+
 class GeminiService:
     """Service wrapping modern google-genai SDK for Telegram bot."""
 
@@ -70,6 +75,8 @@ class GeminiService:
             raise ValueError("API key must not be empty.")
         self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
+        self.last_usage_metadata: Optional[Dict[str, int]] = None
+        self.fallback_model: Optional[str] = None
 
     async def get_available_models(self) -> List[Dict[str, Any]]:
         """
@@ -138,27 +145,72 @@ class GeminiService:
 
     async def generate_stream(
         self,
-        model_id: str,
-        contents: List[Any],
+        model_id: str = settings.DEFAULT_MODEL_ID,
+        contents: Optional[List[Any]] = None,
         system_instruction: Optional[str] = None,
         enable_search: bool = True,
+        enable_code_execution: bool = False,
         temperature: float = 0.8,
         max_output_tokens: int = 24576,
-    ) -> AsyncGenerator[str, None]:
+        thinking_budget: Optional[int] = None,
+        prompt: Optional[str] = None,
+    ) -> AsyncGenerator[StreamChunk, None]:
         """
-        Asynchronous streaming generation with automatic Google Search tool grounding,
-        tool unsupported fallback, and 429 quota handling.
+        Asynchronous streaming generation with automatic Google Search and Code Execution tool grounding,
+        thinking budget configuration, tool unsupported fallback, and 429 quota handling.
         """
-        use_search = enable_search and model_supports_search(model_id)
-        tools = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+        self.fallback_model = None
+        if contents is None and prompt is not None:
+            contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+        elif contents is None:
+            contents = []
+
+        tools = []
+        if enable_search and model_supports_search(model_id):
+            tools.append(types.Tool(google_search=types.GoogleSearch()))
+
+        if enable_code_execution and model_supports_search(model_id):
+            tools.append(types.Tool(code_execution=types.ToolCodeExecution()))
+
+        tools_config = tools if tools else None
+
+        clean_model = model_id.lower().replace("models/", "")
+        is_thinking_model = ("gemini-2.5-" in clean_model or "gemini-3." in clean_model) and "-lite" not in clean_model
+        thinking_config = (
+            types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=True)
+            if (thinking_budget is not None and is_thinking_model)
+            else None
+        )
 
         config = types.GenerateContentConfig(
             temperature=temperature,
             top_p=1.0,
             max_output_tokens=max_output_tokens,
             system_instruction=system_instruction,
-            tools=tools,
+            tools=tools_config,
+            thinking_config=thinking_config,
         )
+
+        def _extract_chunk_content(c: Any) -> str:
+            parts_text = []
+            if getattr(c, "text", None):
+                t = c.text
+                if "<tool_code" not in t and "google_search.search" not in t:
+                    parts_text.append(t)
+            candidates = getattr(c, "candidates", None) or []
+            for cand in candidates:
+                content = getattr(cand, "content", None)
+                if content and getattr(content, "parts", None):
+                    for part in content.parts:
+                        exec_code = getattr(part, "executable_code", None)
+                        if exec_code and getattr(exec_code, "code", None):
+                            code_str = exec_code.code.strip()
+                            parts_text.append(f"\n```python\n{code_str}\n```\n")
+                        exec_res = getattr(part, "code_execution_result", None)
+                        if exec_res and getattr(exec_res, "output", None):
+                            out_str = exec_res.output.strip()
+                            parts_text.append(f"\n```\n[Вывод песочницы / Output]:\n{out_str}\n```\n")
+            return "".join(parts_text)
 
         try:
             stream = await self.client.aio.models.generate_content_stream(
@@ -167,8 +219,17 @@ class GeminiService:
                 config=config,
             )
             async for chunk in stream:
-                if chunk.text:
-                    yield chunk.text
+                if getattr(chunk, "usage_metadata", None):
+                    self.last_usage_metadata = {
+                        "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                        "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                        "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                    }
+                content_str = _extract_chunk_content(chunk)
+                if content_str:
+                    chunk_obj = StreamChunk(content_str)
+                    chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                    yield chunk_obj
 
         except APIError as e:
             err_msg = str(e)
@@ -176,9 +237,43 @@ class GeminiService:
 
             # 1. Quota 429 handling
             if e.code == 429 or "RESOURCE_EXHAUSTED" in err_msg:
-                # Try fallback to gemini-2.5-flash-lite if not already on it
+                # Tier 1: Try fallback to flagship gemini-2.5-flash preserving tools & code execution
+                if model_id != "gemini-2.5-flash" and model_id != "gemini-2.5-flash-lite":
+                    logger.warning(f"Quota exceeded on {model_id}. Attempting primary fallback to gemini-2.5-flash with tools...")
+                    try:
+                        fallback_flash_config = types.GenerateContentConfig(
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                            system_instruction=system_instruction,
+                            tools=tools_config,
+                            thinking_config=thinking_config,
+                        )
+                        stream = await self.client.aio.models.generate_content_stream(
+                            model="gemini-2.5-flash",
+                            contents=contents,
+                            config=fallback_flash_config,
+                        )
+                        self.fallback_model = "gemini-2.5-flash"
+                        async for chunk in stream:
+                            if getattr(chunk, "usage_metadata", None):
+                                self.last_usage_metadata = {
+                                    "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                                    "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                                    "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                                }
+                            content_str = _extract_chunk_content(chunk)
+                            if content_str:
+                                chunk_obj = StreamChunk(content_str)
+                                chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                                yield chunk_obj
+                        return
+                    except APIError as flash_err:
+                        logger.warning(f"Fallback to gemini-2.5-flash failed ({flash_err.code}). Trying lite...")
+                        self.fallback_model = None
+
+                # Tier 2: Emergency fallback to gemini-2.5-flash-lite (pure text without tools)
                 if model_id != "gemini-2.5-flash-lite":
-                    logger.warning(f"Quota exceeded on {model_id}. Attempting fallback to gemini-2.5-flash-lite...")
+                    logger.warning(f"Quota exceeded. Attempting emergency fallback to gemini-2.5-flash-lite...")
                     fallback_config = types.GenerateContentConfig(
                         temperature=temperature,
                         max_output_tokens=max_output_tokens,
@@ -189,9 +284,19 @@ class GeminiService:
                         contents=contents,
                         config=fallback_config,
                     )
+                    self.fallback_model = "gemini-2.5-flash-lite"
                     async for chunk in stream:
-                        if chunk.text:
-                            yield chunk.text
+                        if getattr(chunk, "usage_metadata", None):
+                            self.last_usage_metadata = {
+                                "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                                "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                                "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                            }
+                        content_str = _extract_chunk_content(chunk)
+                        if content_str:
+                            chunk_obj = StreamChunk(content_str)
+                            chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                            yield chunk_obj
                     return
                 else:
                     raise GeminiQuotaExceededException("Превышена квота запросов (429). Попробуйте позже.")
@@ -200,7 +305,7 @@ class GeminiService:
             if "tool" in err_msg.lower() and ("not supported" in err_msg.lower() or "invalid" in err_msg.lower()):
                 clean_id = model_id.lower().replace("models/", "")
                 KNOWN_NO_SEARCH_MODELS.add(clean_id)
-                logger.warning(f"Search tool not supported on {model_id}. Retrying without tools...")
+                logger.warning(f"Search/code tool not supported on {model_id}. Retrying without tools...")
 
                 retry_config = types.GenerateContentConfig(
                     temperature=temperature,
@@ -208,6 +313,7 @@ class GeminiService:
                     max_output_tokens=max_output_tokens,
                     system_instruction=system_instruction,
                     tools=None,
+                    thinking_config=thinking_config,
                 )
                 stream = await self.client.aio.models.generate_content_stream(
                     model=model_id,
@@ -215,8 +321,16 @@ class GeminiService:
                     config=retry_config,
                 )
                 async for chunk in stream:
+                    if getattr(chunk, "usage_metadata", None):
+                        self.last_usage_metadata = {
+                            "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                            "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                            "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                        }
                     if chunk.text:
-                        yield chunk.text
+                        chunk_obj = StreamChunk(chunk.text)
+                        chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                        yield chunk_obj
                 return
 
             raise GeminiAPIException(f"Gemini API Error: {err_msg}", status_code=e.code)

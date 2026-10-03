@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = Field(default=3200, description="Character threshold to split AI responses safely")
     MAX_FORMATTED_CHUNK_SIZE: int = Field(default=4000, description="Max character length after Markdown escaping")
     MESSAGE_BUFFER_TIMEOUT: float = Field(default=1.5, description="Seconds to buffer rapid user messages")
+    RICH_CHUNK_SIZE: int = Field(default=30000, description="Character threshold for Telegram Bot API 10.1+ Rich Messages")
+    RICH_THROTTLE_INTERVAL: float = Field(default=0.8, description="Throttle interval in seconds for Rich live stream edits")
+    LEGACY_THROTTLE_INTERVAL: float = Field(default=1.1, description="Throttle interval in seconds for legacy MarkdownV2 live stream edits")
+    DEFAULT_MESSAGE_FORMAT: str = Field(default="rich", description="Default user message format: 'rich' or 'markdown'")
 
 
 # Global settings singleton
@@ -69,6 +73,7 @@ MODELS_METADATA: Dict[str, Dict[str, bool]] = {
     # Gemini 2.5 series
     "gemini-2.5-flash": {"supports_search": True, "supports_system_instruction": True},
     "gemini-2.5-pro": {"supports_search": True, "supports_system_instruction": True},
+    "gemini-2.5-flash-lite": {"supports_search": False, "supports_system_instruction": True},
     "gemini-2.5-flash-preview-05-20": {"supports_search": False, "supports_system_instruction": True},
     "gemini-2.5-flash-lite-preview-06-17": {"supports_search": False, "supports_system_instruction": True},
     "gemini-2.5-flash-lite-preview-05-20": {"supports_search": False, "supports_system_instruction": True},

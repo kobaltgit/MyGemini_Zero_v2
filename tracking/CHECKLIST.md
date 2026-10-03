@@ -210,4 +210,131 @@
 - [x] Расширить анкету профиля до 8 структурированных вопросов с инлайн-кнопками выбора вариантов
 - [x] Реализовать форму обратной связи и отчёта об ошибках (`/feedback`, `/report_error`)
 
+---
+
+## 13. Интеграция tg-rich-converter и Rich Messages (Telegram 10.1+)
+- [x] Создание изолированной рабочей ветки `feature/tg-rich-converter`
+- [x] Покрытие тестами всех критических модулей до начала рефакторинга (`tests/` — 77 unit-тестов)
+- [x] Установка и фиксация зависимости `tg-rich-converter>=0.5.1` в `requirements.txt`
+- [x] Расширение модели данных `User` (`message_format` DEFAULT 'rich') и автомиграция БД в `core/database.py`
+- [x] Переработка `services/throttler.py`:
+  - [x] Токенизированный стриминг `to_rich(..., streaming=True)` с интервалом 0.8с
+  - [x] Поддержка нативных таблиц `<table bordered striped>`, LaTeX KaTeX `<tg-math>`, спойлеров `<details><summary>`
+  - [x] Лимит чанка до 30 000 символов (вместо 3 200)
+  - [x] Каскадный фоллбэк на чистый текст при ошибках парсинга сущностей
+  - [x] Сохранение классического режима MarkdownV2 с интервалом 1.1с
+- [x] Добавление переключателя формата в меню «Настройки» (`handlers/settings.py`, `keyboards/inline.py`)
+- [x] Доработка системного промпта в `handlers/chat.py` (рекомендация таблиц, формул и тегов `<think>`)
+- [x] Прогон полного тестового сьюта: 82/82 тестов успешно пройдены
+
+---
+
+## 14. Стабилизация и устранение багов релизной ветки (BUG-025 .. BUG-029)
+- [x] Автоматический перехват мастер-пароля в чате на лету с авто-удалением за 0.25с и обработка кнопки «⌨️ Ввести в чате» (BUG-025)
+- [x] Восстановление выборки недавнего контекста диалога: последние `limit` сообщений (`order_by desc` + reverse) вместо старейших (BUG-026)
+- [x] Отключение Google Search для серии моделей `-lite`, предотвращение утечек `<tool_code>` в Telegram и покрытие тестами (BUG-027)
+- [x] Устранение обрыва сообщений («Ра») при сетевом сбросе соединения `ServerDisconnectedError` в троттлере, цикл ретраев и аварийный фоллбэк доставки (BUG-028)
+- [x] Разрешение ввода API-ключа в чате в мидлвари `KeyLeakAndAntispamMiddleware`, активная кнопка «🔑 Сменить API-ключ» и удаление ключа (BUG-029)
+- [x] Полный набор тестов: 87/87 тестов пройдены успешно (100% pass)
+
+---
+
+## 15. Элегантная шапка контекста и управление спойлером
+- [x] Оформление контекстной информации ответа (диалог, персона, модель) в нативную цитату Telegram <blockquote> (Вариант 1) со строками в столбик
+- [x] Добавление поля header_style ('blockquote' | 'expandable' | 'hidden') в модель User и автомиграция в core/database.py
+- [x] Доработка services/throttler.py:
+  - [x] Автоматическая трансформация первой цитаты в <blockquote expandable> при режиме expandable
+  - [x] Поддержка Telegram MarkdownV2 **>...** для классического формата
+- [x] Добавление кнопки и меню выбора стиля шапки в keyboards/inline.py и handlers/settings.py
+- [x] Реализация методов UserRepository.update_header_style и поддержка в update_settings
+- [x] Написание юнит-тестов на клавиатуры, репозиторий и троттлер: 90/90 тестов успешно пройдены (100% pass)
+
+---
+
+## 16. Рефакторинг UX и интерактивных возможностей (Фаза 1)
+- [x] Конфигурация глубины размышлений (Thinking Budget) для моделей `gemini-2.5-*`:
+  - [x] Добавлена колонка `thinking_budget` (INTEGER DEFAULT 1024 NOT NULL) в модель `User` и автомиграция в `core/database.py`
+  - [x] Поддержка `thinking_budget` в `UserRepository.update_settings` и отдельный метод `update_thinking_budget`
+  - [x] Интеграция `types.ThinkingConfig(thinking_budget=..., include_thoughts=True)` в `services/gemini.py`
+  - [x] Инлайн-меню выбора бюджета (⚡ Мгновенно / ⚖️ Баланс / 🔬 Глубокий анализ) в `keyboards/inline.py` и `handlers/settings.py`
+- [x] Быстрые действия под ответом модели (Quick Actions):
+  - [x] Метод `ConversationRepository.delete_last_assistant_message(dialog_id)`
+  - [x] Метод `ConversationRepository.delete_last_turn(dialog_id, fernet)` с возвратом текста запроса пользователя
+  - [x] Поддержка `stop_keyboard` и `quick_actions_keyboard` в `MessageStreamThrottler` (`services/throttler.py`)
+  - [x] Кнопка `[⏹️ Стоп]` (`chat_action:stop`) во время стриминга с прерыванием генерации
+  - [x] Кнопки `[🔄 Еще раз]` (`chat_action:regen`) и `[↩️ Откатить шаг]` (`chat_action:undo`) под завершенным сообщением
+  - [x] Кнопка прямого экспорта `[📥 Экспорт диалога]` (`chat_action:export`) под завершенным ответом в чате
+- [x] Экспорт диалога в Markdown (`.md`):
+  - [x] Кнопка `📥 Экспорт в Markdown` в меню управления диалогом (`keyboards/inline.py`)
+  - [x] Кнопка `📥 Экспорт диалога` прямо в блоке быстрых действий под сообщениями чата
+  - [x] Хэндлеры `dialog_export:<id>` и `chat_action:export` с дешифровкой на лету в RAM и отправкой через `BufferedInputFile`
+- [x] Комплексное тестирование:
+  - [x] 12 новых тестов в `tests/test_ui_phase1.py`
+  - [x] Обновление существующих тестов под сигнатуры методов
+  - [x] Успешное прохождение всех 107 тестов (107/107 pass)
+
+---
+
+## 17. Рефакторинг UX и системных настроек (Фаза 2)
+- [x] HUD расхода токенов и времени генерации (Token & Speed HUD, IDEA-012):
+  - [x] Фиксация `start_time` при инициализации `MessageStreamThrottler` и расчет `elapsed_time`
+  - [x] Инкапсуляция `StreamChunk` с `usage_metadata` в `services/gemini.py`
+  - [x] Методы `set_usage_metadata` и `update_usage_from_chunk` в `MessageStreamThrottler`
+  - [x] Вывод наглядной строки метрик `⚡ 1.2с • 📊 450 токенов (Prompt: 110, Gen: 340)` в шапку ответа
+- [x] Настраиваемый тайм-аут жизни ZK-сессии (Configurable Session TTL, IDEA-016):
+  - [x] Добавлена колонка `session_ttl_minutes` (INTEGER DEFAULT 60 NOT NULL) в модель `User` и автомиграция в `core/database.py`
+  - [x] Методы `update_settings(session_ttl_minutes=...)` и `update_session_ttl(...)` в `UserRepository`
+  - [x] Поддержка динамического TTL в `SessionManager` (`is_session_active`, `get_fernet`, `is_unlocked`) и в `AuthMiddleware`
+  - [x] Клавиатура `get_session_ttl_keyboard` (15 мин, 1 час, 8 часов, 24 часа) и обработка колбэков в `handlers/settings.py`
+- [x] Песочница исполнения Python-кода (Code Execution Sandbox, IDEA-003):
+  - [x] Добавлена колонка `enable_code_execution` (BOOLEAN DEFAULT 0 NOT NULL) в модель `User` и автомиграция в `core/database.py`
+  - [x] Метод `toggle_code_execution(...)` в `UserRepository`
+  - [x] Тумблер `🐍 Песочница Python: 🟢 Вкл / 🔴 Выкл` в меню Настроек и колбэк `settings_toggle_code_exec`
+  - [x] Подключение `types.Tool(code_execution=types.ToolCodeExecution())` в `services/gemini.py` и передача флага в `handlers/chat.py`
+- [x] Комплексное тестирование:
+  - [x] 11 новых тестов в `tests/test_phase2_backend.py`
+  - [x] 11 новых тестов в `tests/test_ui_phase2.py`
+  - [x] Успешное прохождение всех 129 тестов (129/129 pass, 100% success)
+
+---
+
+## 18. Верификация песочницы, многоуровневый 429-фолбэк и сноска о переключении моделей (Вариант Б)
+- [x] Захват вывода песочницы Python (`executable_code` и `code_execution_result`) в `services/gemini.py`
+- [x] Жесткая системная директива обязательного исполнения Python для вычислений в `handlers/chat.py`
+- [x] Многоуровневый каскад фолбэка (Multi-tier 429 Fallback) в `services/gemini.py`:
+  - [x] Уровень 1: при 429 на флагманах переключение на `gemini-2.5-flash` с сохранением песочницы и поиска
+  - [x] Уровень 2: аварийный переход на `gemini-2.5-flash-lite` без инструментов при исчерпании лимитов 2.5-flash
+- [x] Прозрачная сноска о смене модели под сообщением (Вариант Б):
+  - [x] Фиксация `fallback_model` в `GeminiService`
+  - [x] Метод `set_fallback_notice()` в `MessageStreamThrottler` (`services/throttler.py`)
+  - [x] Автоматическое добавление курсивной сноски перед кнопками быстрых действий в `handlers/chat.py`
+  - [x] Сохранение чистого ответа модели в БД без замусоривания истории диалога
+- [x] Полное покрытие тестами:
+  - [x] Тест отслеживания `fallback_model` в `tests/test_services.py` (`TestGeminiQuotaFallback`)
+  - [x] Тест отображения сноски в `tests/test_throttler.py` (`test_throttler_fallback_notice_footnote`)
+  - [x] Успешное прохождение всех 131 тестов (131/131 pass, 100% success)
+
+---
+
+## 19. Выделенный режим песочницы Python в чате (Изолированные вычисления)
+- [x] Кнопка `[🐍 В песочницу]` в блоке быстрых действий под сообщениями бота (`keyboards/inline.py`):
+  - [x] Отображение кнопки только при включенной опции `enable_code_execution` в настройках пользователя
+  - [x] Кнопка `❌ Отмена` (`chat_action:sandbox_cancel`) через `get_sandbox_cancel_keyboard`
+- [x] FSM-маршрутизация и состояние `SandboxStates.waiting_for_sandbox_prompt` (`handlers/chat.py`):
+  - [x] Обработчик колбэка `chat_action:sandbox` с фиксацией `active_dialog_id`
+  - [x] Карточка-руководство с описанием преимуществ (ноль галлюцинаций, чистый лист, сквозная история) и типовых задач (математика, частотный анализ букв/слов, комбинаторика, фильтрация списков)
+  - [x] Обработчик колбэка `chat_action:sandbox_cancel` для возврата в обычный чат
+- [x] Изолированное выполнение запроса с чистого листа (`handle_sandbox_prompt`):
+  - [x] Полная изоляция от предыдущей истории сообщений (передача только текущего промпта без шумного контекста)
+  - [x] Принудительное отключение поиска `enable_search=False` для максимальной концентрации модели на вызове кода
+  - [x] Строгая системная директива обязательного запуска Python для расчетов и подсчета символов
+  - [x] Передача `thinking_config` в 429-фолбэке на `gemini-2.5-flash` (`services/gemini.py`)
+- [x] Сквозное сохранение в активный диалог:
+  - [x] Шифрование ключом Fernet и запись вопроса пользователя в SQLite (`ConversationRepository.add_message`)
+  - [x] Шифрование и запись проверенного ответа ассистента в SQLite для бесшовного продолжения диалога
+- [x] Юнит-тестирование:
+  - [x] 5 тестов в `tests/test_ui_phase2.py` (клавиатуры, отмена, запуск изолированного запроса, сохранение в БД)
+  - [x] Успешное прохождение всех 136 тестов проекта (136/136 pass, 100% success)
+
+
 

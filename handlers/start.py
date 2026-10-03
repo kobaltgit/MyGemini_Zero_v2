@@ -53,6 +53,8 @@ async def handle_start(message: Message, state: FSMContext):
 
     # 1. New user onboarding: prompt to set master password
     if not has_password:
+        from handlers.auth import AuthStates
+        await state.set_state(AuthStates.waiting_for_password_setup)
         if lang_code == "ru":
             welcome_text = (
                 f"👋 Здравствуйте, <b>{user.first_name}</b>!\n\n"
@@ -95,6 +97,8 @@ async def handle_start(message: Message, state: FSMContext):
     is_admin = (user.id == settings.ADMIN_USER_ID)
 
     if not is_unlocked:
+        from handlers.auth import AuthStates
+        await state.set_state(AuthStates.waiting_for_password_unlock)
         if lang_code == "ru":
             locked_text = (
                 f"👋 С возвращением, <b>{user.first_name}</b>!\n\n"

@@ -17,6 +17,7 @@ from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
 from keyboards.inline import (
     get_main_menu_keyboard,
     get_settings_keyboard,
+    get_header_style_keyboard,
     get_documents_list_keyboard,
     get_profile_keyboard,
 )
@@ -81,9 +82,12 @@ class TestNewFeatures(unittest.TestCase):
         from database.repositories.user_repository import UserRepository
         user_repo = UserRepository(None)
 
-        user_paid_future = User(user_id=1, username="paid1", first_name="Пётр", subscription_status="active", subscription_end_date="2026-10-01")
+        from datetime import datetime, timedelta
+        future_date_1 = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+        future_date_2 = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+        user_paid_future = User(user_id=1, username="paid1", first_name="Пётр", subscription_status="active", subscription_end_date=future_date_1)
         user_expired = User(user_id=2, username="free2", first_name="Иван", subscription_status="active", subscription_end_date="2025-01-01")
-        user_paid_long = User(user_id=3, username="paid3", first_name="Ольга", subscription_status="active", subscription_end_date="2026-11-01")
+        user_paid_long = User(user_id=3, username="paid3", first_name="Ольга", subscription_status="active", subscription_end_date=future_date_2)
 
         self.assertTrue(user_repo.is_subscription_active(user_paid_future))
         self.assertFalse(user_repo.is_subscription_active(user_expired))
@@ -189,9 +193,199 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw_response, "Привет, мир!")
         self.assertTrue(mock_bot.edit_message_text.called)
         last_call_kwargs = mock_bot.edit_message_text.call_args.kwargs
-        self.assertIn("text", last_call_kwargs)
-        self.assertIn("Тест", last_call_kwargs["text"])
-        self.assertIn("Привет", last_call_kwargs["text"])
+        if "rich_message" in last_call_kwargs:
+            content = last_call_kwargs["rich_message"].html
+        else:
+            content = last_call_kwargs.get("text", "")
+        self.assertIn("Тест", content)
+        self.assertIn("Привет", content)
+
+    async def test_chat_password_unlock_on_the_fly(self):
+        """Verifies on-the-fly password interception in chat when vault is locked."""
+        from handlers.chat import handle_user_message
+        from core.database import init_db, async_session_maker
+        from database.repositories import UserRepository
+        from middlewares.auth import session_manager
+
+        await init_db()
+        test_uid = 888777
+        session_manager.lock_session(test_uid)
+
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            await repo.add_or_update_user(user_id=test_uid, username="chat_pwd_test", first_name="Pass", last_name="Test")
+            await repo.set_master_password(test_uid, "my_super_secret_pwd")
+
+        self.assertFalse(session_manager.is_unlocked(test_uid))
+
+        # Simulate user sending password directly into chat
+        mock_msg = AsyncMock()
+        mock_msg.from_user.id = test_uid
+        mock_msg.from_user.language_code = "ru"
+        mock_msg.text = "my_super_secret_pwd"
+        mock_msg.caption = None
+        mock_msg.photo = None
+        mock_msg.voice = None
+        mock_msg.document = None
+
+        mock_bot = AsyncMock()
+        await handle_user_message(mock_msg, mock_bot)
+
+        # Must be unlocked now!
+        self.assertTrue(session_manager.is_unlocked(test_uid))
+        # Sensitive message must have been deleted
+        self.assertTrue(mock_msg.delete.called)
+        # Bot should have answered with unlock success
+        self.assertTrue(mock_msg.answer.called)
+        answer_text = mock_msg.answer.call_args.args[0]
+        self.assertIn("разблокирован", answer_text.lower())
+
+    async def test_api_key_chat_interception_and_settings_delete(self):
+        """Verifies API key interception in chat and deletion in settings."""
+        from handlers.chat import handle_user_message
+        from handlers.settings import handle_api_key_delete
+        from core.database import init_db, async_session_maker
+        from database.repositories import UserRepository
+        from middlewares.auth import session_manager
+        from core.crypto import get_fernet_instance, generate_salt
+
+        await init_db()
+        test_uid = 777666
+        salt = generate_salt()
+        fernet = get_fernet_instance("test_pass", salt)
+        session_manager.unlock_session(test_uid, fernet)
+
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            await repo.add_or_update_user(user_id=test_uid, username="api_key_test", first_name="Api", last_name="Test")
+
+        # Simulate user sending API key into chat
+        mock_msg = AsyncMock()
+        mock_msg.from_user.id = test_uid
+        mock_msg.from_user.language_code = "ru"
+        mock_msg.text = "AIzaSyB1234567890abcdefghijklmnopqrstuvwxyz99"
+        mock_msg.caption = None
+        mock_msg.photo = None
+        mock_msg.voice = None
+        mock_msg.document = None
+
+        mock_bot = AsyncMock()
+        await handle_user_message(mock_msg, mock_bot)
+
+        # Message must have been deleted
+        self.assertTrue(mock_msg.delete.called)
+        # Verify key was encrypted and saved in DB
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            self.assertTrue(await repo.is_api_key_set(test_uid))
+            saved_key = await repo.get_api_key(test_uid, fernet)
+            self.assertEqual(saved_key, "AIzaSyB1234567890abcdefghijklmnopqrstuvwxyz99")
+
+        # Now test delete callback
+        mock_cb = AsyncMock()
+        mock_cb.from_user.id = test_uid
+        mock_cb.message = AsyncMock()
+        mock_cb.answer = AsyncMock()
+        await handle_api_key_delete(mock_cb)
+
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            self.assertFalse(await repo.is_api_key_set(test_uid))
+
+    def test_header_style_keyboards(self):
+        """Verifies get_header_style_keyboard and get_settings_keyboard with header_style."""
+        kb_quote = get_header_style_keyboard(current_style="blockquote", lang_code="ru")
+        self.assertIn("✅", kb_quote.inline_keyboard[0][0].text)
+        self.assertEqual(kb_quote.inline_keyboard[0][0].callback_data, "set_header_style:blockquote")
+
+        kb_expand = get_header_style_keyboard(current_style="expandable", lang_code="ru")
+        self.assertIn("✅", kb_expand.inline_keyboard[1][0].text)
+        self.assertEqual(kb_expand.inline_keyboard[1][0].callback_data, "set_header_style:expandable")
+
+        # In settings keyboard
+        settings_kb = get_settings_keyboard(
+            current_model="gemini-2.5-flash",
+            current_style="🤖 По умолчанию",
+            current_persona="🤖 Обычный",
+            has_api_key=True,
+            lang_code="ru",
+            current_header_style="expandable",
+        )
+        header_btn = next((b[0] for b in settings_kb.inline_keyboard if b[0].callback_data == "settings_header"), None)
+        self.assertIsNotNone(header_btn)
+        self.assertIn("🔽 Под спойлером", header_btn.text)
+
+    async def test_header_style_throttler(self):
+        """Verifies throttler renders blockquote expandable when header_style is expandable."""
+        from services.throttler import MessageStreamThrottler
+
+        bot = AsyncMock()
+        initial_msg = AsyncMock()
+        initial_msg.message_id = 999
+        header = "> 💬 **Диалог:** Main\n> 🎭 **Персона:** Assistant\n> ⚡ **Модель:** Flash\n\n"
+
+        # 1. Expandable style
+        throttler_exp = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=initial_msg,
+            header_text=header,
+            message_format="rich",
+            header_style="expandable",
+        )
+        await throttler_exp.handle_chunk("Hello from AI")
+        await throttler_exp.finalize()
+
+        # Check call args of edit_message_text
+        call_kwargs = bot.edit_message_text.call_args.kwargs
+        rich_msg = call_kwargs.get("rich_message")
+        self.assertIsNotNone(rich_msg)
+        self.assertIn("<details><summary>", rich_msg.html)
+        self.assertIn("<blockquote>", rich_msg.html)
+        self.assertIn("<br/>", rich_msg.html)
+        self.assertIn("Hello from AI", rich_msg.html)
+
+        # 2. Standard blockquote style
+        bot.reset_mock()
+        throttler_quote = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=initial_msg,
+            header_text=header,
+            message_format="rich",
+            header_style="blockquote",
+        )
+        await throttler_quote.handle_chunk("Standard quote output")
+        await throttler_quote.finalize()
+
+        call_kwargs_q = bot.edit_message_text.call_args.kwargs
+        rich_msg_q = call_kwargs_q.get("rich_message")
+        self.assertIsNotNone(rich_msg_q)
+        self.assertIn("<blockquote>", rich_msg_q.html)
+        self.assertIn("<br/>", rich_msg_q.html)
+        self.assertNotIn("<blockquote expandable>", rich_msg_q.html)
+
+    async def test_user_header_style_repository(self):
+        """Verifies UserRepository.update_header_style persists preference in DB."""
+        from core.database import init_db, async_session_maker
+        from database.repositories import UserRepository
+
+        await init_db()
+        import time
+        test_uid = int(time.time() * 10000) % 900_000_000 + 100_000_000
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            user, _ = await repo.add_or_update_user(
+                user_id=test_uid,
+                username="header_user",
+                first_name="Header",
+                last_name="User",
+            )
+            self.assertEqual(user.header_style, "blockquote")
+
+            await repo.update_header_style(test_uid, "expandable")
+            updated = await repo.get_by_id(test_uid)
+            self.assertEqual(updated.header_style, "expandable")
 
 
 if __name__ == "__main__":

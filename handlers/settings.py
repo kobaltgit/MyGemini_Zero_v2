@@ -15,11 +15,15 @@ from database.repositories import UserRepository
 from services.gemini import GeminiService
 from keyboards.inline import (
     get_settings_keyboard,
+    get_thinking_budget_keyboard,
+    get_session_ttl_keyboard,
     get_models_keyboard,
     get_styles_keyboard,
     get_personas_keyboard,
     get_api_key_input_keyboard,
     get_language_keyboard,
+    get_format_keyboard,
+    get_header_style_keyboard,
     get_unlock_keyboard,
     get_close_button,
 )
@@ -46,15 +50,55 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     cur_style = BOT_STYLES.get(user.bot_style if user else "default", "🤖 По умолчанию")
     persona_dict = BOT_PERSONAS.get(user.active_persona if user else "default", {})
     cur_persona = persona_dict.get("name_ru", "🤖 Обычный") if lang_code == "ru" else persona_dict.get("name_en", "🤖 Normal")
+    cur_format = getattr(user, "message_format", "rich") or "rich"
+    cur_header = getattr(user, "header_style", "blockquote") or "blockquote"
+    cur_budget = getattr(user, "thinking_budget", 1024)
+    if cur_budget is None:
+        cur_budget = 1024
+    cur_ttl = getattr(user, "session_ttl_minutes", 60)
+    if cur_ttl is None:
+        cur_ttl = 60
+    code_exec = bool(getattr(user, "enable_code_execution", False))
 
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
         lang_str = "🇷🇺 Русский"
+        fmt_str = "⚡ Rich Messages (10.1+)" if cur_format == "rich" else "📝 Классический (Markdown)"
+        if cur_header == "expandable":
+            hdr_str = "🔽 Под спойлером"
+        elif cur_header == "hidden":
+            hdr_str = "🚫 Скрыта"
+        else:
+            hdr_str = "▎ Открытая цитата"
+
+        if cur_budget == 0:
+            thinking_str = "⚡ Мгновенно (0)"
+        elif cur_budget == 4096:
+            thinking_str = "🔬 Глубокий анализ (4096)"
+        else:
+            thinking_str = "⚖️ Баланс (1024)"
+
+        if cur_ttl == 15:
+            ttl_str = "⏱️ 15 минут"
+        elif cur_ttl == 480:
+            ttl_str = "💼 8 часов"
+        elif cur_ttl == 1440:
+            ttl_str = "🌙 24 часа"
+        else:
+            ttl_str = "🕐 1 час"
+
+        code_str = "🟢 Включена" if code_exec else "🔴 Выключена"
+
         text = (
             "⚙️ <b>Настройки AI-ассистента:</b>\n\n"
             f"• <b>Модель:</b> <code>{cur_model}</code>\n"
             f"• <b>Персона:</b> {cur_persona}\n"
             f"• <b>Стиль:</b> {cur_style}\n"
+            f"• <b>Размышления:</b> {thinking_str}\n"
+            f"• <b>Песочница Python:</b> {code_str}\n"
+            f"• <b>Таймаут сессии:</b> {ttl_str}\n"
+            f"• <b>Формат:</b> {fmt_str}\n"
+            f"• <b>Шапка:</b> {hdr_str}\n"
             f"• <b>Язык:</b> {lang_str}\n"
             f"• <b>API-ключ:</b> {key_status}\n\n"
             "Выберите параметр для изменения:"
@@ -62,11 +106,42 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     else:
         key_status = "✅ Set" if has_api_key else "❌ Not set"
         lang_str = "🇬🇧 English"
+        fmt_str = "⚡ Rich Messages (10.1+)" if cur_format == "rich" else "📝 Classic (Markdown)"
+        if cur_header == "expandable":
+            hdr_str = "🔽 Under spoiler"
+        elif cur_header == "hidden":
+            hdr_str = "🚫 Hidden"
+        else:
+            hdr_str = "▎ Standard quote"
+
+        if cur_budget == 0:
+            thinking_str = "⚡ Instant (0)"
+        elif cur_budget == 4096:
+            thinking_str = "🔬 Deep Analysis (4096)"
+        else:
+            thinking_str = "⚖️ Balanced (1024)"
+
+        if cur_ttl == 15:
+            ttl_str = "⏱️ 15 mins"
+        elif cur_ttl == 480:
+            ttl_str = "💼 8 hours"
+        elif cur_ttl == 1440:
+            ttl_str = "🌙 24 hours"
+        else:
+            ttl_str = "🕐 1 hour"
+
+        code_str = "🟢 Enabled" if code_exec else "🔴 Disabled"
+
         text = (
             "⚙️ <b>AI Assistant Settings:</b>\n\n"
             f"• <b>Model:</b> <code>{cur_model}</code>\n"
             f"• <b>Persona:</b> {cur_persona}\n"
             f"• <b>Style:</b> {cur_style}\n"
+            f"• <b>Thinking Budget:</b> {thinking_str}\n"
+            f"• <b>Python Sandbox:</b> {code_str}\n"
+            f"• <b>Session Timeout:</b> {ttl_str}\n"
+            f"• <b>Format:</b> {fmt_str}\n"
+            f"• <b>Header:</b> {hdr_str}\n"
             f"• <b>Language:</b> {lang_str}\n"
             f"• <b>API Key:</b> {key_status}\n\n"
             "Select setting to configure:"
@@ -78,6 +153,11 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         current_persona=cur_persona,
         has_api_key=has_api_key,
         lang_code=lang_code,
+        current_format=cur_format,
+        current_header_style=cur_header,
+        current_thinking_budget=cur_budget,
+        current_session_ttl=cur_ttl,
+        code_execution_enabled=code_exec,
     )
     return text, keyboard
 
@@ -136,6 +216,271 @@ async def handle_set_language(callback: CallbackQuery):
         )
     except Exception:
         pass
+
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_format")
+async def handle_settings_format(callback: CallbackQuery):
+    """Renders message format switcher."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_format = getattr(user, "message_format", "rich") or "rich"
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        title = (
+            "⚡ <b>Формат вывода сообщений:</b>\n\n"
+            "• <b>Rich Messages (10.1+):</b> Нативные таблицы, формулы LaTeX, "
+            "спойлеры размышлений, лимит до 32 768 символов и плавный стриминг.\n\n"
+            "• <b>Классический (Markdown):</b> Текстовые блоки кода, деление по 3200 символов "
+            "для старых версий Telegram Desktop и сторонних клиентов.\n\n"
+            "Выберите желаемый формат:"
+        )
+    else:
+        title = (
+            "⚡ <b>Message Output Format:</b>\n\n"
+            "• <b>Rich Messages (10.1+):</b> Native tables, LaTeX math equations, "
+            "thinking block spoilers, up to 32,768 characters per message, and smooth streaming.\n\n"
+            "• <b>Classic (Markdown):</b> Text code blocks, 3,200 character chunks "
+            "for outdated Telegram clients.\n\n"
+            "Select desired format:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        title,
+        reply_markup=get_format_keyboard(current_format=cur_format, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("set_format:"))
+async def handle_set_format(callback: CallbackQuery):
+    """Updates user message format preference in DB."""
+    user_id = callback.from_user.id
+    new_format = callback.data.split("set_format:")[1]
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_message_format(user_id=user_id, message_format=new_format)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        ans_text = "Формат изменён на Rich Messages ⚡" if new_format == "rich" else "Формат изменён на Классический 📝"
+    else:
+        ans_text = "Format set to Rich Messages ⚡" if new_format == "rich" else "Format set to Classic Markdown 📝"
+
+    await safe_answer_callback(callback, text=ans_text)
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_header")
+async def handle_settings_header(callback: CallbackQuery):
+    """Renders header style switcher."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_header = getattr(user, "header_style", "blockquote") or "blockquote"
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        title = (
+            "📌 <b>Отображение шапки контекста (диалог, персона, модель):</b>\n\n"
+            "• <b>▎ Открытая цитата (Вариант 1):</b> Нативная вертикальная плашка Telegram "
+            "со строками в аккуратный столбик.\n\n"
+            "• <b>🔽 Сворачивать под спойлер:</b> Нативная сворачиваемая цитата "
+            "(нажмите на стрелочку, чтобы развернуть инфо).\n\n"
+            "• <b>🚫 Скрыть шапку:</b> Максимальный минимализм — вывод только ответа модели.\n\n"
+            "Выберите желаемый вариант:"
+        )
+    else:
+        title = (
+            "📌 <b>Context Header Display (dialogue, persona, model):</b>\n\n"
+            "• <b>▎ Standard Quote (Option 1):</b> Telegram native vertical quote bar "
+            "with neat stacked lines.\n\n"
+            "• <b>🔽 Collapse Under Spoiler:</b> Expandable blockquote "
+            "(tap the arrow to expand info).\n\n"
+            "• <b>🚫 Hide Header:</b> Minimalist output — only the model's answer is shown.\n\n"
+            "Select desired option:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        title,
+        reply_markup=get_header_style_keyboard(current_style=cur_header, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("set_header_style:"))
+async def handle_set_header_style(callback: CallbackQuery):
+    """Updates header style preference in DB."""
+    user_id = callback.from_user.id
+    new_style = callback.data.split("set_header_style:")[1]
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_header_style(user_id=user_id, header_style=new_style)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        names = {
+            "blockquote": "▎ Открытая цитата",
+            "expandable": "🔽 Сворачиваемая под спойлер",
+            "hidden": "🚫 Скрытая шапка",
+        }
+        ans_text = f"Шапка: {names.get(new_style, new_style)}"
+    else:
+        names = {
+            "blockquote": "▎ Standard Quote",
+            "expandable": "🔽 Collapse Under Spoiler",
+            "hidden": "🚫 Hidden Header",
+        }
+        ans_text = f"Header: {names.get(new_style, new_style)}"
+
+    await safe_answer_callback(callback, text=ans_text)
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_thinking")
+async def handle_settings_thinking(callback: CallbackQuery):
+    """Renders thinking budget selection view."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_budget = getattr(user, "thinking_budget", 1024)
+        if cur_budget is None:
+            cur_budget = 1024
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        title = (
+            "🧠 <b>Бюджет размышлений (Thinking Budget):</b>\n\n"
+            "Настройка времени и глубины рассуждений модели (Gemini 2.5 Flash / Pro):\n\n"
+            "• <b>⚡ 0 (Мгновенно):</b> Отключение размышлений для максимально быстрых ответов.\n"
+            "• <b>⚖️ 1024 (Баланс):</b> Оптимальный баланс между скоростью и логической проработкой.\n"
+            "• <b>🔬 4096 (Глубокий анализ):</b> Максимальная глубина для сложного кода, математики и анализа.\n\n"
+            "Выберите желаемый режим:"
+        )
+    else:
+        title = (
+            "🧠 <b>Thinking Budget:</b>\n\n"
+            "Configure model reasoning depth and token budget (Gemini 2.5 Flash / Pro):\n\n"
+            "• <b>⚡ 0 (Instant):</b> Disable reasoning for immediate responses.\n"
+            "• <b>⚖️ 1024 (Balanced):</b> Optimal balance between response speed and logical reasoning.\n"
+            "• <b>🔬 4096 (Deep Analysis):</b> Maximum depth for complex coding, math, and analysis.\n\n"
+            "Select desired mode:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        title,
+        reply_markup=get_thinking_budget_keyboard(current_budget=cur_budget, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("set_thinking:"))
+async def handle_set_thinking(callback: CallbackQuery):
+    """Updates thinking budget in DB and refreshes settings view."""
+    user_id = callback.from_user.id
+    try:
+        val = int(callback.data.split("set_thinking:")[1])
+    except (IndexError, ValueError):
+        val = 1024
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_thinking_budget(user_id=user_id, budget=val)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        ans_text = f"Бюджет размышлений: {val} токенов" if val > 0 else "Размышления отключены (0)"
+    else:
+        ans_text = f"Thinking budget set to {val} tokens" if val > 0 else "Thinking disabled (0)"
+
+    await safe_answer_callback(callback, text=ans_text)
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_ttl")
+async def handle_settings_ttl(callback: CallbackQuery):
+    """Renders session TTL (inactivity timeout) configuration keyboard."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_ttl = getattr(user, "session_ttl_minutes", 60) if user else 60
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    text = (
+        "⏱️ <b>Время жизни сессии (Inactivity Timeout):</b>\n\n"
+        "Выберите время бездействия, через которое незашифрованный ключ в оперативной памяти "
+        "автоматически стирается (Zero-Knowledge безопасность):"
+        if lang_code == "ru"
+        else "⏱️ <b>Session Lifetime (Inactivity Timeout):</b>\n\n"
+        "Select inactivity period after which ephemeral decryption key in RAM "
+        "will be automatically cleared (Zero-Knowledge security):"
+    )
+    kb = get_session_ttl_keyboard(current_ttl=cur_ttl or 60, lang_code=lang_code)
+    await safe_edit_message_text(callback.message, text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("set_ttl:"))
+async def handle_set_ttl(callback: CallbackQuery):
+    """Updates user session TTL and refreshes settings view."""
+    ttl_str = callback.data.split(":")[1]
+    try:
+        ttl_val = int(ttl_str)
+    except ValueError:
+        ttl_val = 60
+
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_session_ttl(user_id, ttl_val)
+
+    ans_text = (
+        f"⏱️ Таймаут сессии: {ttl_val} мин."
+        if (callback.from_user.language_code or "").startswith("ru")
+        else f"⏱️ Session timeout: {ttl_val} mins."
+    )
+    await safe_answer_callback(callback, ans_text)
+
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_toggle_code_exec")
+async def handle_toggle_code_exec(callback: CallbackQuery):
+    """Toggles Python code execution sandbox state and refreshes settings view."""
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        new_state = await user_repo.toggle_code_execution(user_id)
+
+    if (callback.from_user.language_code or "").startswith("ru"):
+        ans_text = "🐍 Песочница Python включена" if new_state else "🐍 Песочница Python выключена"
+    else:
+        ans_text = "🐍 Python Sandbox enabled" if new_state else "🐍 Python Sandbox disabled"
+
+    await safe_answer_callback(callback, ans_text)
 
     text, keyboard = await render_settings_view(user_id)
     await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
@@ -347,32 +692,63 @@ async def handle_set_persona(callback: CallbackQuery):
 
 @router.callback_query(F.data == "settings_api_key")
 async def handle_settings_api_key(callback: CallbackQuery):
-    """Prompts user to enter their API key via chat."""
+    """Prompts user to enter or change their API key via chat."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        has_api_key = await user_repo.is_api_key_set(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        status_text = "✅ <b>Ключ установлен и активен.</b>" if has_api_key else "❌ <b>Ключ ещё не установлен.</b>"
+        action_text = "ввести новый ключ и заменить текущий" if has_api_key else "установить ваш персональный ключ"
+        text = (
+            "🔑 <b>Управление Google Gemini API-ключом</b>\n\n"
+            f"• <b>Текущий статус:</b> {status_text}\n"
+            "• <b>Безопасность:</b> Zero-Knowledge (ключ надёжно зашифрован в базе данных вашим мастер-паролем).\n\n"
+            f"Нажмите кнопку ниже, чтобы {action_text}:"
+        )
+    else:
+        status_text = "✅ <b>Key is set and active.</b>" if has_api_key else "❌ <b>Key is not set yet.</b>"
+        action_text = "enter a new key to replace current" if has_api_key else "set your personal key"
+        text = (
+            "🔑 <b>Google Gemini API Key Management</b>\n\n"
+            f"• <b>Current status:</b> {status_text}\n"
+            "• <b>Security:</b> Zero-Knowledge (key securely encrypted in the database with your master password).\n\n"
+            f"Click the button below to {action_text}:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        text,
+        reply_markup=get_api_key_input_keyboard(has_api_key=has_api_key, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "api_key_delete")
+async def handle_api_key_delete(callback: CallbackQuery):
+    """Deletes API key for user."""
     await safe_answer_callback(callback)
     user_id = callback.from_user.id
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(user_id)
         lang_code = user.language_code if user and user.language_code else "ru"
+        await user_repo.delete_api_key(user_id)
 
-    if lang_code == "ru":
-        text = (
-            "🔑 <b>Установка Google Gemini API-ключа</b>\n\n"
-            "Бот работает по модели <b>BYOK (Bring Your Own Key)</b>. "
-            "Ваш ключ шифруется вашим мастер-паролем в базе данных.\n\n"
-            "Нажмите кнопку ниже, чтобы ввести ключ:"
-        )
-    else:
-        text = (
-            "🔑 <b>Setting Google Gemini API Key</b>\n\n"
-            "The bot operates on the <b>BYOK (Bring Your Own Key)</b> model. "
-            "Your key is encrypted with your master password in the database.\n\n"
-            "Click button below to enter key:"
-        )
-
+    msg = (
+        "🗑️ <b>API-ключ успешно удалён.</b>\n\n"
+        "Вы можете в любой момент установить новый ключ в этом меню."
+        if lang_code == "ru"
+        else "🗑️ <b>API key successfully deleted.</b>\n\n"
+        "You can set a new key at any time in this menu."
+    )
     await safe_edit_message_text(
         callback.message,
-        text,
-        reply_markup=get_api_key_input_keyboard(lang_code=lang_code),
+        msg,
+        reply_markup=get_api_key_input_keyboard(has_api_key=False, lang_code=lang_code),
         parse_mode="HTML",
     )

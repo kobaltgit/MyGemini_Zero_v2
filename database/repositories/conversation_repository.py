@@ -3,7 +3,7 @@ Conversation Repository for MyGemini Zero v2.
 Manages encrypted message history, token tracking, message retrieval, and data clearing.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
@@ -64,18 +64,28 @@ class ConversationRepository:
     ) -> List[Dict[str, Any]]:
         """
         Retrieves message history for a dialog and decrypts the text in-memory.
+        If limit is specified, fetches the most recent messages, returning them
+        in chronological order (oldest to newest).
         If decryption fails (e.g. invalid key), provides a safe placeholder.
         """
-        stmt = (
-            select(Conversation)
-            .where(Conversation.dialog_id == dialog_id)
-            .order_by(Conversation.conversation_id.asc())
-        )
         if limit:
-            stmt = stmt.limit(limit)
-
-        result = await self.session.execute(stmt)
-        conversations = result.scalars().all()
+            stmt = (
+                select(Conversation)
+                .where(Conversation.dialog_id == dialog_id)
+                .order_by(Conversation.conversation_id.desc())
+                .limit(limit)
+            )
+            result = await self.session.execute(stmt)
+            conversations = list(result.scalars().all())
+            conversations.reverse()  # Restore chronological order (oldest to newest)
+        else:
+            stmt = (
+                select(Conversation)
+                .where(Conversation.dialog_id == dialog_id)
+                .order_by(Conversation.conversation_id.asc())
+            )
+            result = await self.session.execute(stmt)
+            conversations = list(result.scalars().all())
 
         decrypted_messages = []
         for c in conversations:
@@ -221,4 +231,88 @@ class ConversationRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalar() or 0
+
+    async def delete_last_assistant_message(self, dialog_id: int) -> Optional[int]:
+        """
+        Deletes the most recent model/assistant response in the dialog.
+        Returns the conversation_id of the deleted message, or None if none found.
+        """
+        stmt = (
+            select(Conversation)
+            .where(
+                Conversation.dialog_id == dialog_id,
+                Conversation.role != "user",
+            )
+            .order_by(Conversation.conversation_id.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        msg = result.scalar_one_or_none()
+        if not msg:
+            return None
+
+        deleted_id = msg.conversation_id
+        await self.session.delete(msg)
+        await self.session.commit()
+        return deleted_id
+
+    async def delete_last_turn(
+        self, dialog_id: int, fernet_instance: Fernet
+    ) -> Tuple[Optional[str], Optional[int]]:
+        """
+        Deletes the last assistant message and the preceding user message in the dialog.
+        Returns (user_prompt_text, deleted_count).
+        If no turn exists, returns (None, None).
+        """
+        stmt_latest = (
+            select(Conversation)
+            .where(Conversation.dialog_id == dialog_id)
+            .order_by(Conversation.conversation_id.desc())
+            .limit(1)
+        )
+        res_latest = await self.session.execute(stmt_latest)
+        latest_msg = res_latest.scalar_one_or_none()
+        if not latest_msg:
+            return None, None
+
+        user_text: Optional[str] = None
+        deleted_count = 0
+
+        if latest_msg.role != "user":
+            assistant_msg = latest_msg
+            # Find the preceding user message
+            stmt_user = (
+                select(Conversation)
+                .where(
+                    Conversation.dialog_id == dialog_id,
+                    Conversation.role == "user",
+                    Conversation.conversation_id < assistant_msg.conversation_id,
+                )
+                .order_by(Conversation.conversation_id.desc())
+                .limit(1)
+            )
+            res_user = await self.session.execute(stmt_user)
+            user_msg = res_user.scalar_one_or_none()
+
+            await self.session.delete(assistant_msg)
+            deleted_count += 1
+
+            if user_msg:
+                if user_msg.message_text:
+                    raw_blob = user_msg.message_text
+                    enc_str = raw_blob.decode("utf-8") if isinstance(raw_blob, (bytes, bytearray)) else str(raw_blob)
+                    user_text = decrypt_data(enc_str, fernet_instance)
+                await self.session.delete(user_msg)
+                deleted_count += 1
+        else:
+            user_msg = latest_msg
+            if user_msg.message_text:
+                raw_blob = user_msg.message_text
+                enc_str = raw_blob.decode("utf-8") if isinstance(raw_blob, (bytes, bytearray)) else str(raw_blob)
+                user_text = decrypt_data(enc_str, fernet_instance)
+            await self.session.delete(user_msg)
+            deleted_count += 1
+
+        await self.session.commit()
+        return user_text, deleted_count
 

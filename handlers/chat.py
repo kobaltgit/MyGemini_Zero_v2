@@ -5,10 +5,12 @@ multimodal processing (Images, Audio, PDF/DOCX), accidental API key interception
 bilingual stream header, error parser mapping, and safe streaming via MessageStreamThrottler.
 """
 
-from typing import List, Any
+from typing import List, Any, Dict, Optional
 from io import BytesIO
 from aiogram import Router, F, Bot
-from aiogram.types import Message, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from google.genai import types
 
 from core.database import async_session_maker
@@ -27,14 +29,258 @@ from keyboards.inline import (
     get_subscription_keyboard,
     get_main_menu_keyboard,
     get_close_button,
+    get_chat_quick_actions_keyboard,
+    get_streaming_stop_keyboard,
+    get_sandbox_cancel_keyboard,
 )
-from keyboards.reply import get_locked_reply_keyboard, get_setup_reply_keyboard
+from handlers.dialogs import export_and_send_dialog_md
+from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from core.config import settings, BOT_STYLES, BOT_PERSONAS, SUBSCRIPTION_PLANS
+from core.ui_helpers import safe_edit_message_text, safe_answer_callback
 from core.localization import get_text
 from core.logger import get_logger
 
 logger = get_logger("user_messages")
 router = Router(name="chat")
+
+
+class SandboxStates(StatesGroup):
+    """FSM state for dedicated isolated Python sandbox execution."""
+    waiting_for_sandbox_prompt = State()
+
+
+# Active message throttlers mapped by chat_id for live stop / abortion support
+active_streams: Dict[int, MessageStreamThrottler] = {}
+
+
+@router.message(SandboxStates.waiting_for_sandbox_prompt)
+async def handle_sandbox_prompt(message: Message, bot: Bot, state: FSMContext):
+    """Executes a computation query in 100% isolated Python sandbox mode with zero past dialogue noise."""
+    user_id = message.from_user.id
+    user_text = message.text or ""
+    state_data = await state.get_data()
+    active_dialog_id = state_data.get("active_dialog_id")
+
+    # Fetch user language & profile from DB
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else (
+            "ru" if not message.from_user.language_code or message.from_user.language_code.startswith("ru") else "en"
+        )
+        if not active_dialog_id and user:
+            active_dialog_id = user.active_dialog_id
+
+    if not message.text:
+        err_text = (
+            "⚠️ Пожалуйста, отправьте текстовую задачу, формулу или код для расчёта в песочнице:"
+            if lang_code == "ru"
+            else "⚠️ Please send a text task, formula, or code to compute in the sandbox:"
+        )
+        await message.answer(err_text, reply_markup=get_sandbox_cancel_keyboard(lang_code))
+        return
+
+    # Check cancel command
+    if user_text.strip().lower() in ["/cancel", "отмена", "cancel"]:
+        await state.clear()
+        cancel_text = (
+            "❌ <b>Режим песочницы отменён.</b>\nВы вернулись в обычный диалог."
+            if lang_code == "ru"
+            else "❌ <b>Sandbox mode cancelled.</b>\nYou returned to normal chat."
+        )
+        await message.answer(cancel_text, parse_mode="HTML")
+        return
+
+    # Check panic password
+    candidate = user_text.strip()
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        if await user_repo.verify_panic_password(user_id, candidate):
+            await state.clear()
+            conv_repo = ConversationRepository(session)
+            await conv_repo.clear_user_data(user_id)
+            session_manager.lock_session(user_id)
+            panic_text = (
+                "🚨 <b>Аварийный сброс выполнен.</b>\n"
+                "Все диалоги, сообщения, профиль и ключи были безвозвратно удалены из базы данных."
+                if lang_code == "ru"
+                else "🚨 <b>Emergency wipe executed.</b>\n"
+                "All dialogues, messages, profile, and keys have been permanently wiped."
+            )
+            await message.answer(panic_text, reply_markup=get_locked_reply_keyboard(lang_code), parse_mode="HTML")
+            return
+
+    fernet = session_manager.get_fernet(user_id)
+    if not fernet:
+        await state.clear()
+        prompt_unlock = (
+            "🔒 <b>Хранилище заблокировано.</b>\n\n"
+            "Пожалуйста, введите ваш мастер-пароль для разблокировки перед запуском песочницы:"
+            if lang_code == "ru"
+            else "🔒 <b>Vault is locked.</b>\n\n"
+            "Please enter your master password to unlock before using sandbox:"
+        )
+        await message.answer(prompt_unlock, reply_markup=get_unlock_keyboard(lang_code), parse_mode="HTML")
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        api_key = await user_repo.get_api_key(user_id, fernet)
+
+    if not api_key:
+        await state.clear()
+        prompt_key = (
+            "🔑 <b>API-ключ Google Gemini не установлен.</b>"
+            if lang_code == "ru"
+            else "🔑 <b>Google Gemini API key is not set.</b>"
+        )
+        await message.answer(prompt_key, reply_markup=get_api_key_input_keyboard(False, lang_code=lang_code), parse_mode="HTML")
+        return
+
+    await state.clear()
+
+    # Isolated system instruction dedicated to Python code execution
+    sandbox_instruction = (
+        "You are a specialized Python computation engine. Your sole objective is to provide mathematically, "
+        "algorithmically, and computationally accurate results. "
+        "You MUST ALWAYS generate and execute Python code using your code_execution tool for any calculations, "
+        "counting, string parsing, sorting, or data analysis. "
+        "NEVER guess, estimate, or simulate results in plain text without running the code. "
+        "Base your final explanation strictly on the actual execution output."
+        if lang_code == "en" else
+        "Ты — специализированный вычислительный движок на базе Python. Твоя единственная цель — "
+        "предоставить математически, алгоритмически и фактически точный результат. "
+        "Для любых расчетов, подсчета символов, слов, частотности, сортировки, обработки списков или математических операций "
+        "ты ОБЯЗАН написать и запустить исполняемый код с помощью встроенного инструмента code_execution. "
+        "НИКОГДА не угадывай, не выдумывай и не симулируй вывод в тексте без фактического запуска в песочнице. "
+        "Свои выводы и объяснения строй строго на базе реального вывода выполнения кода."
+    )
+
+    # Isolated prompt with ZERO history
+    gemini_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
+
+    async with async_session_maker() as session:
+        dialog_repo = DialogRepository(session)
+        active_d = await dialog_repo.get_by_id(active_dialog_id) if active_dialog_id else None
+        dialog_title = active_d.name if active_d else ("Основной диалог" if lang_code == "ru" else "Main Dialogue")
+
+    model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
+    header_style = getattr(user, "header_style", "blockquote") or "blockquote"
+    user_format = getattr(user, "message_format", "rich") or "rich"
+
+    if header_style == "hidden":
+        context_header = ""
+        header_summary = ""
+    else:
+        header_summary = f"💬 {dialog_title} • 🐍 Sandbox • ⚡ {model_id}"
+        if lang_code == "ru":
+            context_header = (
+                f"> 💬 **Диалог:** {dialog_title}\n"
+                f"> 🐍 **Режим:** Изолированная песочница Python\n"
+                f"> ⚡ **Модель:** {model_id}\n\n"
+            )
+        else:
+            context_header = (
+                f"> 💬 **Dialogue:** {dialog_title}\n"
+                f"> 🐍 **Mode:** Isolated Python Sandbox\n"
+                f"> ⚡ **Model:** {model_id}\n\n"
+            )
+
+    thinking_text = "🐍 <i>Запускаю песочницу Python...</i>" if lang_code == "ru" else "🐍 <i>Launching Python sandbox...</i>"
+    thinking_summary = "Размышления" if lang_code == "ru" else "Reasoning"
+    thinking_budget = getattr(user, "thinking_budget", 1024) or 1024
+
+    placeholder_msg = await message.answer(thinking_text, parse_mode="HTML")
+    throttler = MessageStreamThrottler(
+        bot=bot,
+        chat_id=message.chat.id,
+        initial_message=placeholder_msg,
+        header_text=context_header,
+        header_summary=header_summary,
+        message_format=user_format,
+        thinking_summary=thinking_summary,
+        header_style=header_style,
+        stop_keyboard=get_streaming_stop_keyboard(lang_code),
+        quick_actions_keyboard=get_chat_quick_actions_keyboard(lang_code, enable_code_execution=True),
+    )
+
+    gemini_service = GeminiService(api_key=api_key)
+    active_streams[message.chat.id] = throttler
+
+    try:
+        stream = gemini_service.generate_stream(
+            model_id=model_id,
+            contents=gemini_contents,
+            system_instruction=sandbox_instruction,
+            enable_search=False,
+            enable_code_execution=True,
+            thinking_budget=thinking_budget,
+        )
+        async for chunk in stream:
+            if throttler.is_aborted:
+                break
+            throttler.update_usage_from_chunk(chunk)
+            await throttler.handle_chunk(chunk)
+
+        if hasattr(gemini_service, "last_usage_metadata") and isinstance(gemini_service.last_usage_metadata, dict):
+            meta = gemini_service.last_usage_metadata
+            throttler.set_usage_metadata(
+                meta.get("prompt_tokens", 0),
+                meta.get("candidates_tokens", 0),
+                meta.get("total_tokens", 0),
+            )
+
+        if getattr(gemini_service, "fallback_model", None):
+            fallback_model = gemini_service.fallback_model
+            fallback_msg = (
+                f"_ℹ️ Ответ сгенерирован на {fallback_model} (квота {model_id} временно исчерпана)._"
+                if lang_code == "ru" else
+                f"_ℹ️ Generated using {fallback_model} ({model_id} quota temporarily exceeded)._"
+            )
+            throttler.set_fallback_notice(fallback_msg)
+
+        full_reply_text = await throttler.finalize()
+
+    except Exception as e:
+        logger.error(f"Sandbox generation error: {e}")
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=placeholder_msg.message_id)
+        except Exception:
+            pass
+
+        err_key = get_user_friendly_error_key({"error": str(e)})
+        friendly_error = get_text(err_key, lang_code=lang_code)
+
+        if friendly_error == err_key or not friendly_error:
+            raw_err = str(e)[:500]
+            friendly_error = (
+                f"⚠️ Ошибка песочницы Python:\n{raw_err}"
+                if lang_code == "ru"
+                else f"⚠️ Python sandbox error:\n{raw_err}"
+            )
+        await message.answer(friendly_error)
+        return
+    finally:
+        active_streams.pop(message.chat.id, None)
+
+    # Seamlessly persist both the user's calculation query AND verified result into active dialog
+    if full_reply_text and full_reply_text.strip() and active_dialog_id:
+        async with async_session_maker() as session:
+            conv_repo = ConversationRepository(session)
+            await conv_repo.add_message(
+                user_id=user_id,
+                dialog_id=active_dialog_id,
+                role="user",
+                message_text=user_text,
+                fernet_instance=fernet,
+            )
+            await conv_repo.add_message(
+                user_id=user_id,
+                dialog_id=active_dialog_id,
+                role="bot",
+                message_text=full_reply_text,
+                fernet_instance=fernet,
+            )
 
 
 @router.message(F.text | F.photo | F.voice | F.document)
@@ -113,27 +359,91 @@ async def handle_user_message(message: Message, bot: Bot):
             user_repo = UserRepository(session)
             has_password = await user_repo.is_master_password_set(user_id)
 
-        if not has_password:
-            prompt = (
-                "🔐 <b>Установите мастер-пароль.</b>\n\n"
-                "Для создания зашифрованного хранилища и общения с AI задайте ваш мастер-пароль:"
-                if lang_code == "ru"
-                else "🔐 <b>Set master password.</b>\n\n"
-                "To initialize your encrypted vault and chat with AI, set your master password:"
-            )
-            await message.answer(
-                prompt,
-                reply_markup=get_set_password_keyboard(lang_code),
-                parse_mode="HTML",
-            )
-            try:
-                await message.answer(
-                    "🔐 Задайте мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Set master password in window or chat:",
-                    reply_markup=get_setup_reply_keyboard(lang_code),
+            if not has_password:
+                prompt = (
+                    "🔐 <b>Установите мастер-пароль.</b>\n\n"
+                    "Для создания зашифрованного хранилища и общения с AI задайте ваш мастер-пароль:"
+                    if lang_code == "ru"
+                    else "🔐 <b>Set master password.</b>\n\n"
+                    "To initialize your encrypted vault and chat with AI, set your master password:"
                 )
-            except Exception:
-                pass
-            return
+                await message.answer(
+                    prompt,
+                    reply_markup=get_set_password_keyboard(lang_code),
+                    parse_mode="HTML",
+                )
+                try:
+                    await message.answer(
+                        "🔐 Задайте мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Set master password in window or chat:",
+                        reply_markup=get_setup_reply_keyboard(lang_code),
+                    )
+                except Exception:
+                    pass
+                return
+
+            candidate = user_text.strip()
+            if candidate:
+                from handlers.auth import safe_instant_delete
+                await safe_instant_delete(message)
+
+                # 1.1 Check panic password first
+                if await user_repo.verify_panic_password(user_id, candidate):
+                    conv_repo = ConversationRepository(session)
+                    await conv_repo.clear_user_data(user_id)
+                    session_manager.lock_session(user_id)
+                    panic_text = (
+                        "🚨 <b>Аварийный сброс выполнен.</b>\n"
+                        "Все диалоги, сообщения, профиль и ключи были безвозвратно удалены из базы данных."
+                        if lang_code == "ru"
+                        else "🚨 <b>Emergency wipe executed.</b>\n"
+                        "All dialogues, messages, profile, and keys have been permanently wiped."
+                    )
+                    await message.answer(panic_text, reply_markup=get_locked_reply_keyboard(lang_code), parse_mode="HTML")
+                    return
+
+                # 1.2 Check master password (on-the-fly unlock)
+                if await user_repo.verify_master_password(user_id, candidate):
+                    from core.crypto import get_fernet_instance
+                    salt = await user_repo.get_salt(user_id)
+                    fernet_inst = get_fernet_instance(candidate, salt)
+                    session_manager.unlock_session(user_id, fernet_inst)
+
+                    is_admin = (user_id == settings.ADMIN_USER_ID)
+                    unlock_text = (
+                        "🔓 <b>Сейф успешно разблокирован!</b>\n\n"
+                        "Ключи расшифровки загружены в память. Диалоги готовы к продолжению."
+                        if lang_code == "ru"
+                        else "🔓 <b>Vault unlocked successfully!</b>\n\n"
+                        "Decryption keys loaded into memory. Dialogues are ready."
+                    )
+                    await message.answer(
+                        unlock_text,
+                        reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+                        parse_mode="HTML",
+                    )
+                    return
+
+                # 1.3 Incorrect password entered
+                fail_text = (
+                    "❌ <b>Неверный мастер-пароль!</b>\n\n"
+                    "Сообщение удалено для безопасности. Попробуйте ещё раз:"
+                    if lang_code == "ru"
+                    else "❌ <b>Incorrect master password!</b>\n\n"
+                    "Message deleted for safety. Please try again:"
+                )
+                await message.answer(
+                    fail_text,
+                    reply_markup=get_unlock_keyboard(lang_code),
+                    parse_mode="HTML",
+                )
+                try:
+                    await message.answer(
+                        "🔐 Введите мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Enter master password in window or chat:",
+                        reply_markup=get_locked_reply_keyboard(lang_code),
+                    )
+                except Exception:
+                    pass
+                return
 
         prompt = (
             "🔒 <b>Хранилище заблокировано.</b>\n\n"
@@ -288,7 +598,7 @@ async def handle_user_message(message: Message, bot: Bot):
     # 6. Load conversation history
     async with async_session_maker() as session:
         conv_repo = ConversationRepository(session)
-        history_records = await conv_repo.get_dialog_messages(active_dialog_id, fernet, limit=10)
+        history_records = await conv_repo.get_dialog_messages(active_dialog_id, fernet, limit=20)
 
     # Format history for Gemini SDK
     gemini_contents = []
@@ -321,6 +631,34 @@ async def handle_user_message(message: Message, bot: Bot):
     if rag_context:
         system_instruction_blocks.append(f"Knowledge Base:\n{rag_context}")
 
+    user_format = getattr(user, "message_format", "rich") or "rich"
+    if user_format == "rich":
+        rich_guidance = (
+            "Formatting guidelines:\n"
+            "- For structured data, tables, comparisons, or numbers, use standard GitHub-Flavored Markdown tables.\n"
+            "- For mathematical expressions, use standard LaTeX ($...$ inline, $$...$$ for display blocks).\n"
+            "- If analyzing step-by-step, wrap intermediate thinking inside <think>...</think> tags."
+            if lang_code == "en" else
+            "Правила форматирования:\n"
+            "- Для структурированных данных, списков характеристик и сравнений свободно используй компактные Markdown-таблицы.\n"
+            "- Для математических выражений используй стандартный синтаксис LaTeX ($...$ инлайн, $$...$$ отдельными блоками).\n"
+            "- Если анализируешь задачу по шагам, оборачивай свои промежуточные размышления в тег <think>...</think>."
+        )
+        system_instruction_blocks.append(rich_guidance)
+
+    if getattr(user, "enable_code_execution", False):
+        code_exec_guidance = (
+            "Python Code Execution is ENABLED. For any calculations, arithmetic, primes, factorials, "
+            "simulations, counting, or data analysis, you MUST ALWAYS generate and execute Python code using your code_execution tool. "
+            "NEVER guess, estimate, or hallucinate computation results in plain text without running the code."
+            if lang_code == "en" else
+            "Песочница исполнения Python-кода ВКЛЮЧЕНА. При любых математических расчетах, проверке простых чисел, "
+            "факториалах, моделировании, подсчетах или анализе данных ты ОБЯЗАН написать и запустить Python-код "
+            "с помощью встроенного инструмента code_execution. "
+            "Никогда не выдумывай и не пытайся угадать результаты вычислений в тексте без фактического запуска кода в песочнице."
+        )
+        system_instruction_blocks.append(code_exec_guidance)
+
     system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
 
     # 8. Build context header (Dialog, Persona, Model)
@@ -331,23 +669,36 @@ async def handle_user_message(message: Message, bot: Bot):
 
     persona_title = persona_data.get("name_ru", persona_key) if lang_code == "ru" else persona_data.get("name_en", persona_key)
     model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
+    header_style = getattr(user, "header_style", "blockquote") or "blockquote"
+
+    if header_style == "hidden":
+        context_header = ""
+        header_summary = ""
+    else:
+        header_summary = f"💬 {dialog_title} • ⚡ {model_id}"
+        if lang_code == "ru":
+            context_header = (
+                f"> 💬 **Диалог:** {dialog_title}\n"
+                f"> 🎭 **Персона:** {persona_title}\n"
+                f"> ⚡ **Модель:** {model_id}\n\n"
+            )
+        else:
+            context_header = (
+                f"> 💬 **Dialogue:** {dialog_title}\n"
+                f"> 🎭 **Persona:** {persona_title}\n"
+                f"> ⚡ **Model:** {model_id}\n\n"
+            )
 
     if lang_code == "ru":
-        context_header = (
-            f"• **Диалог:** `{dialog_title}`\n"
-            f"• **Персона:** `{persona_title}`\n"
-            f"• **Модель:** `{model_id}`\n"
-            f"---\n\n"
-        )
         thinking_text = "💭 <i>Думаю...</i>"
+        thinking_summary = "Размышления"
     else:
-        context_header = (
-            f"• **Dialogue:** `{dialog_title}`\n"
-            f"• **Persona:** `{persona_title}`\n"
-            f"• **Model:** `{model_id}`\n"
-            f"---\n\n"
-        )
         thinking_text = "💭 <i>Thinking...</i>"
+        thinking_summary = "Reasoning"
+
+    thinking_budget = getattr(user, "thinking_budget", 1024)
+    if thinking_budget is None:
+        thinking_budget = 1024
 
     # 9. Start streaming response
     placeholder_msg = await message.answer(thinking_text, parse_mode="HTML")
@@ -356,9 +707,18 @@ async def handle_user_message(message: Message, bot: Bot):
         chat_id=message.chat.id,
         initial_message=placeholder_msg,
         header_text=context_header,
+        header_summary=header_summary,
+        message_format=user_format,
+        thinking_summary=thinking_summary,
+        header_style=header_style,
+        stop_keyboard=get_streaming_stop_keyboard(lang_code),
+        quick_actions_keyboard=get_chat_quick_actions_keyboard(
+            lang_code, enable_code_execution=getattr(user, "enable_code_execution", False)
+        ),
     )
 
     gemini_service = GeminiService(api_key=api_key)
+    active_streams[message.chat.id] = throttler
 
     try:
         stream = gemini_service.generate_stream(
@@ -366,9 +726,31 @@ async def handle_user_message(message: Message, bot: Bot):
             contents=gemini_contents,
             system_instruction=system_instruction,
             enable_search=True,
+            enable_code_execution=getattr(user, "enable_code_execution", False),
+            thinking_budget=thinking_budget,
         )
         async for chunk in stream:
+            if throttler.is_aborted:
+                break
+            throttler.update_usage_from_chunk(chunk)
             await throttler.handle_chunk(chunk)
+
+        if hasattr(gemini_service, "last_usage_metadata") and isinstance(gemini_service.last_usage_metadata, dict):
+            meta = gemini_service.last_usage_metadata
+            throttler.set_usage_metadata(
+                meta.get("prompt_tokens", 0),
+                meta.get("candidates_tokens", 0),
+                meta.get("total_tokens", 0),
+            )
+
+        if getattr(gemini_service, "fallback_model", None):
+            fallback_model = gemini_service.fallback_model
+            fallback_msg = (
+                f"_ℹ️ Ответ сгенерирован на {fallback_model} (квота {model_id} временно исчерпана)._"
+                if lang_code == "ru" else
+                f"_ℹ️ Generated using {fallback_model} ({model_id} quota temporarily exceeded)._"
+            )
+            throttler.set_fallback_notice(fallback_msg)
 
         full_reply_text = await throttler.finalize()
 
@@ -392,6 +774,8 @@ async def handle_user_message(message: Message, bot: Bot):
 
         await message.answer(friendly_error)
         return
+    finally:
+        active_streams.pop(message.chat.id, None)
 
     # 10. Save encrypted messages to DB
     async with async_session_maker() as session:
@@ -405,10 +789,474 @@ async def handle_user_message(message: Message, bot: Bot):
             fernet_instance=fernet,
         )
         # Save assistant message
-        await conv_repo.add_message(
-            user_id=user_id,
-            dialog_id=active_dialog_id,
-            role="bot",
-            message_text=full_reply_text,
-            fernet_instance=fernet,
+        if full_reply_text and full_reply_text.strip():
+            await conv_repo.add_message(
+                user_id=user_id,
+                dialog_id=active_dialog_id,
+                role="bot",
+                message_text=full_reply_text,
+                fernet_instance=fernet,
+            )
+
+
+@router.callback_query(F.data == "chat_action:stop")
+async def handle_chat_action_stop(callback: CallbackQuery):
+    """Aborts active generation stream for this chat."""
+    chat_id = callback.message.chat.id if callback.message else callback.from_user.id
+    throttler = active_streams.get(chat_id)
+    if throttler:
+        throttler.abort()
+        ans_text = "⏹️ Генерация остановлена" if (callback.from_user.language_code or "").startswith("ru") else "⏹️ Generation stopped"
+        await safe_answer_callback(callback, ans_text)
+    else:
+        ans_text = "Генерация уже завершена" if (callback.from_user.language_code or "").startswith("ru") else "Generation already finished"
+        await safe_answer_callback(callback, ans_text)
+
+
+@router.callback_query(F.data == "chat_action:undo")
+async def handle_chat_action_undo(callback: CallbackQuery):
+    """Deletes the last turn (bot message and preceding user message) from active dialog."""
+    user_id = callback.from_user.id
+    fernet = session_manager.get_fernet(user_id)
+    if not fernet:
+        ans_text = (
+            "🔒 Сейф заблокирован. Разблокируйте память мастер-паролем."
+            if (callback.from_user.language_code or "").startswith("ru")
+            else "🔒 Vault is locked. Please unlock with master password."
         )
+        await safe_answer_callback(callback, ans_text, show_alert=True)
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        active_dialog_id = user.active_dialog_id if user else None
+
+        if not active_dialog_id:
+            await safe_answer_callback(
+                callback,
+                "Активный диалог не найден." if lang_code == "ru" else "No active dialogue found.",
+                show_alert=True,
+            )
+            return
+
+        conv_repo = ConversationRepository(session)
+        user_text, deleted_count = await conv_repo.delete_last_turn(active_dialog_id, fernet)
+
+    if deleted_count and deleted_count > 0:
+        await safe_answer_callback(callback, "Шаг отменён" if lang_code == "ru" else "Turn undone")
+        notice = (
+            "↩️ <b>Последний шаг отменен. Контекст очищен.</b>"
+            if lang_code == "ru"
+            else "↩️ <b>Last turn undone. Context cleared.</b>"
+        )
+        if user_text:
+            prompt_preview = user_text[:150] + ("..." if len(user_text) > 150 else "")
+            notice += f"\n\n<i>«{prompt_preview}»</i>"
+        try:
+            await safe_edit_message_text(
+                callback.message,
+                notice,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[get_close_button(lang_code)]]),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    else:
+        empty_msg = "Нет сообщений для отмены." if lang_code == "ru" else "No turns to undo."
+        await safe_answer_callback(callback, empty_msg, show_alert=True)
+
+
+@router.callback_query(F.data == "chat_action:regen")
+async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
+    """Regenerates the last assistant response for the user's last prompt."""
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id if callback.message else user_id
+
+    if chat_id in active_streams:
+        await safe_answer_callback(
+            callback,
+            "Пожалуйста, подождите завершения текущей генерации."
+            if (callback.from_user.language_code or "").startswith("ru")
+            else "Please wait for current generation to finish.",
+            show_alert=True,
+        )
+        return
+
+    fernet = session_manager.get_fernet(user_id)
+    if not fernet:
+        await safe_answer_callback(
+            callback,
+            "🔒 Сейф заблокирован. Разблокируйте память мастер-паролем."
+            if (callback.from_user.language_code or "").startswith("ru")
+            else "🔒 Vault is locked. Please unlock with master password.",
+            show_alert=True,
+        )
+        return
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if not user or not user.active_dialog_id:
+            await safe_answer_callback(
+                callback,
+                "Активный диалог не найден."
+                if (callback.from_user.language_code or "").startswith("ru")
+                else "Active dialogue not found.",
+                show_alert=True,
+            )
+            return
+
+        active_dialog_id = user.active_dialog_id
+        lang_code = user.language_code or "ru"
+        api_key = await user_repo.get_api_key(user_id, fernet) or settings.GEMINI_API_KEY
+        if not api_key:
+            await safe_answer_callback(
+                callback,
+                "🔑 API-ключ не установлен." if lang_code == "ru" else "🔑 API key not set.",
+                show_alert=True,
+            )
+            return
+
+        conv_repo = ConversationRepository(session)
+        # 1. Delete last assistant response
+        deleted_id = await conv_repo.delete_last_assistant_message(active_dialog_id)
+        if not deleted_id:
+            await safe_answer_callback(
+                callback,
+                "Нет ответа для повторной генерации." if lang_code == "ru" else "No response to regenerate.",
+                show_alert=True,
+            )
+            return
+
+        # 2. Get updated history to extract user prompt
+        history_records = await conv_repo.get_dialog_messages(active_dialog_id, fernet, limit=20)
+        if not history_records:
+            await safe_answer_callback(
+                callback,
+                "История сообщений пуста." if lang_code == "ru" else "Conversation history is empty.",
+                show_alert=True,
+            )
+            return
+
+        last_user_record = None
+        for h in reversed(history_records):
+            if h["role"] == "user":
+                last_user_record = h
+                break
+
+        if not last_user_record:
+            await safe_answer_callback(
+                callback,
+                "Запрос пользователя не найден." if lang_code == "ru" else "User prompt not found.",
+                show_alert=True,
+            )
+            return
+
+        user_prompt = last_user_record.get("text", "")
+
+        dialog_repo = DialogRepository(session)
+        active_d = await dialog_repo.get_by_id(active_dialog_id)
+        dialog_title = active_d.name if active_d else ("Основной диалог" if lang_code == "ru" else "Main Dialogue")
+
+    await safe_answer_callback(
+        callback,
+        "🔄 Перегенерация ответа..." if lang_code == "ru" else "🔄 Regenerating response..."
+    )
+
+    # Format history for Gemini SDK (excluding the prompt turn which is appended after)
+    gemini_contents = []
+    for h in history_records:
+        if h["conversation_id"] < last_user_record["conversation_id"]:
+            role = "user" if h["role"] == "user" else "model"
+            text_val = h.get("text", "")
+            if text_val and not text_val.startswith("[Ошибка"):
+                gemini_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=text_val)]))
+
+    gemini_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_prompt)]))
+
+    # RAG search for user prompt
+    rag_context = ""
+    vm = VectorStoreManager(api_key=api_key)
+    if user_prompt and not user_prompt.startswith("["):
+        rag_context = await vm.search_context(active_dialog_id, user_prompt)
+
+    # Build System Instruction
+    persona_key = user.active_persona or "default"
+    style_key = user.bot_style or "default"
+    persona_data = BOT_PERSONAS.get(persona_key, {})
+    persona_prompt = persona_data.get("prompt_ru", "") if lang_code == "ru" else persona_data.get("prompt_en", persona_data.get("prompt_ru", ""))
+    style_prompt = BOT_STYLES.get(style_key, "")
+
+    system_instruction_blocks = []
+    if persona_prompt:
+        system_instruction_blocks.append(f"Role:\n{persona_prompt}")
+    if style_prompt:
+        system_instruction_blocks.append(f"Style: {style_prompt}")
+    if rag_context:
+        system_instruction_blocks.append(f"Knowledge Base:\n{rag_context}")
+
+    user_format = getattr(user, "message_format", "rich") or "rich"
+    if user_format == "rich":
+        rich_guidance = (
+            "Formatting guidelines:\n"
+            "- For structured data, tables, comparisons, or numbers, use standard GitHub-Flavored Markdown tables.\n"
+            "- For mathematical expressions, use standard LaTeX ($...$ inline, $$...$$ for display blocks).\n"
+            "- If analyzing step-by-step, wrap intermediate thinking inside <think>...</think> tags."
+            if lang_code == "en" else
+            "Правила форматирования:\n"
+            "- Для структурированных данных, списков характеристик и сравнений свободно используй компактные Markdown-таблицы.\n"
+            "- Для математических выражений используй стандартный синтаксис LaTeX ($...$ инлайн, $$...$$ отдельными блоками).\n"
+            "- Если анализируешь задачу по шагам, оборачивай свои промежуточные размышления в тег <think>...</think>."
+        )
+        system_instruction_blocks.append(rich_guidance)
+
+    if getattr(user, "enable_code_execution", False):
+        code_exec_guidance = (
+            "Python Code Execution is ENABLED. For any calculations, arithmetic, primes, factorials, "
+            "simulations, counting, or data analysis, you MUST ALWAYS generate and execute Python code using your code_execution tool. "
+            "NEVER guess, estimate, or hallucinate computation results in plain text without running the code."
+            if lang_code == "en" else
+            "Песочница исполнения Python-кода ВКЛЮЧЕНА. При любых математических расчетах, проверке простых чисел, "
+            "факториалах, моделировании, подсчетах или анализе данных ты ОБЯЗАН написать и запустить Python-код "
+            "с помощью встроенного инструмента code_execution. "
+            "Никогда не выдумывай и не пытайся угадать результаты вычислений в тексте без фактического запуска кода в песочнице."
+        )
+        system_instruction_blocks.append(code_exec_guidance)
+
+    system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
+
+    # Build context header
+    persona_title = persona_data.get("name_ru", persona_key) if lang_code == "ru" else persona_data.get("name_en", persona_key)
+    model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
+    header_style = getattr(user, "header_style", "blockquote") or "blockquote"
+
+    if header_style == "hidden":
+        context_header = ""
+        header_summary = ""
+    else:
+        header_summary = f"💬 {dialog_title} • ⚡ {model_id}"
+        if lang_code == "ru":
+            context_header = (
+                f"> 💬 **Диалог:** {dialog_title}\n"
+                f"> 🎭 **Персона:** {persona_title}\n"
+                f"> ⚡ **Модель:** {model_id}\n\n"
+            )
+        else:
+            context_header = (
+                f"> 💬 **Dialogue:** {dialog_title}\n"
+                f"> 🎭 **Persona:** {persona_title}\n"
+                f"> ⚡ **Model:** {model_id}\n\n"
+            )
+
+    if lang_code == "ru":
+        thinking_text = "💭 <i>Думаю...</i>"
+        thinking_summary = "Размышления"
+    else:
+        thinking_text = "💭 <i>Thinking...</i>"
+        thinking_summary = "Reasoning"
+
+    thinking_budget = getattr(user, "thinking_budget", 1024)
+    if thinking_budget is None:
+        thinking_budget = 1024
+
+    # Update callback message with thinking placeholder
+    await safe_edit_message_text(callback.message, thinking_text, parse_mode="HTML")
+    throttler = MessageStreamThrottler(
+        bot=bot,
+        chat_id=chat_id,
+        initial_message=callback.message,
+        header_text=context_header,
+        header_summary=header_summary,
+        message_format=user_format,
+        thinking_summary=thinking_summary,
+        header_style=header_style,
+        stop_keyboard=get_streaming_stop_keyboard(lang_code),
+        quick_actions_keyboard=get_chat_quick_actions_keyboard(
+            lang_code, enable_code_execution=getattr(user, "enable_code_execution", False)
+        ),
+    )
+
+    gemini_service = GeminiService(api_key=api_key)
+    active_streams[chat_id] = throttler
+
+    try:
+        stream = gemini_service.generate_stream(
+            model_id=model_id,
+            contents=gemini_contents,
+            system_instruction=system_instruction,
+            enable_search=True,
+            enable_code_execution=getattr(user, "enable_code_execution", False),
+            thinking_budget=thinking_budget,
+        )
+        async for chunk in stream:
+            if throttler.is_aborted:
+                break
+            throttler.update_usage_from_chunk(chunk)
+            await throttler.handle_chunk(chunk)
+
+        if hasattr(gemini_service, "last_usage_metadata") and isinstance(gemini_service.last_usage_metadata, dict):
+            meta = gemini_service.last_usage_metadata
+            throttler.set_usage_metadata(
+                meta.get("prompt_tokens", 0),
+                meta.get("candidates_tokens", 0),
+                meta.get("total_tokens", 0),
+            )
+
+        if getattr(gemini_service, "fallback_model", None):
+            fallback_model = gemini_service.fallback_model
+            fallback_msg = (
+                f"_ℹ️ Ответ сгенерирован на {fallback_model} (квота {model_id} временно исчерпана)._"
+                if lang_code == "ru" else
+                f"_ℹ️ Generated using {fallback_model} ({model_id} quota temporarily exceeded)._"
+            )
+            throttler.set_fallback_notice(fallback_msg)
+
+        full_reply_text = await throttler.finalize()
+    except Exception as e:
+        logger.error(f"Regeneration error: {e}")
+        err_key = get_user_friendly_error_key({"error": str(e)})
+        friendly_error = get_text(err_key, lang_code=lang_code)
+        if friendly_error == err_key or not friendly_error:
+            raw_err = str(e)[:500]
+            friendly_error = (
+                f"⚠️ Ошибка генерации ответа:\n{raw_err}"
+                if lang_code == "ru"
+                else f"⚠️ Generation error:\n{raw_err}"
+            )
+        await safe_edit_message_text(callback.message, friendly_error)
+        return
+    finally:
+        active_streams.pop(chat_id, None)
+
+    # Save regenerated assistant message to DB
+    if full_reply_text and full_reply_text.strip():
+        async with async_session_maker() as session:
+            conv_repo = ConversationRepository(session)
+            await conv_repo.add_message(
+                user_id=user_id,
+                dialog_id=active_dialog_id,
+                role="bot",
+                message_text=full_reply_text,
+                fernet_instance=fernet,
+            )
+
+
+@router.callback_query(F.data == "chat_action:export")
+async def handle_chat_action_export(callback: CallbackQuery):
+    """Exports the currently active dialog to Markdown directly from chat quick actions."""
+    user_id = callback.from_user.id
+    fernet = session_manager.get_fernet(user_id)
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        active_dialog_id = user.active_dialog_id if user else None
+
+    if not fernet:
+        locked_text = (
+            "🔒 Память заблокирована. Пожалуйста, разблокируйте сейф мастер-паролем, чтобы экспортировать диалог."
+            if lang_code == "ru"
+            else "🔒 Vault is locked. Please unlock with master password to export dialogue."
+        )
+        await safe_answer_callback(callback, locked_text, show_alert=True)
+        return
+
+    if not active_dialog_id:
+        not_found = "Активный диалог не найден." if lang_code == "ru" else "No active dialogue found."
+        await safe_answer_callback(callback, not_found, show_alert=True)
+        return
+
+    await export_and_send_dialog_md(
+        dialog_id=active_dialog_id,
+        user_id=user_id,
+        fernet=fernet,
+        target_message=callback.message,
+        lang_code=lang_code,
+        callback=callback,
+    )
+
+
+@router.callback_query(F.data == "chat_action:sandbox")
+async def handle_chat_action_sandbox(callback: CallbackQuery, state: FSMContext):
+    """Enters dedicated isolated Python sandbox computation mode."""
+    user_id = callback.from_user.id
+    fernet = session_manager.get_fernet(user_id)
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        active_dialog_id = user.active_dialog_id if user else None
+
+    if not fernet:
+        locked_text = (
+            "🔒 Память заблокирована. Пожалуйста, разблокируйте сейф мастер-паролем перед запуском песочницы."
+            if lang_code == "ru"
+            else "🔒 Vault is locked. Please unlock with master password before using sandbox."
+        )
+        await safe_answer_callback(callback, locked_text, show_alert=True)
+        return
+
+    if not active_dialog_id:
+        not_found = "Активный диалог не найден." if lang_code == "ru" else "No active dialogue found."
+        await safe_answer_callback(callback, not_found, show_alert=True)
+        return
+
+    await state.set_state(SandboxStates.waiting_for_sandbox_prompt)
+    await state.update_data(active_dialog_id=active_dialog_id)
+
+    if lang_code == "ru":
+        intro_text = (
+            "🐍 <b>Песочница Python (Изолированные вычисления)</b>\n\n"
+            "В этом режиме вы можете решать любые задачи, требующие абсолютной точности расчётов, без риска фантазий и галлюцинаций модели:\n\n"
+            "• ⚙️ <b>Настоящий интерпретатор:</b> Модель пишет скрипт, а код физически выполняется на серверах Google в безопасной облачной среде Python.\n"
+            "• 🎯 <b>Чистый лист:</b> Запрос выполняется изолированно — предыдущая переписка не передаётся, что исключает ошибки контекста.\n"
+            "• 💾 <b>Сквозная история:</b> Как только расчёт завершится, ваш вопрос и проверенный результат автоматически сохранятся в текущий диалог.\n\n"
+            "<b>Что здесь можно делать:</b>\n"
+            "1. <b>Математика:</b> простые числа, факториалы, уравнения, матрицы, интегралы.\n"
+            "2. <b>Анализ текста:</b> точный подсчёт символов, частотности букв, слов, поиск паттернов.\n"
+            "3. <b>Статистика и логика:</b> комбинаторика, вероятности, симуляции, алгоритмы.\n"
+            "4. <b>Таблицы и списки:</b> сортировка, группировка, сложные фильтрации данных.\n\n"
+            "✍️ <i>Введите задачу, формулу или код для расчёта:</i>"
+        )
+    else:
+        intro_text = (
+            "🐍 <b>Python Sandbox (Isolated Computation)</b>\n\n"
+            "In this mode, you can solve any tasks requiring absolute computational accuracy without hallucinations:\n\n"
+            "• ⚙️ <b>Real Interpreter:</b> Code runs physically in a secure cloud Python sandbox on Google servers.\n"
+            "• 🎯 <b>Clean Slate:</b> The prompt is processed in complete isolation — past dialogue history is not sent.\n"
+            "• 💾 <b>Seamless History:</b> Once computation finishes, both your query and the verified result are saved to the active dialogue.\n\n"
+            "<b>What you can calculate here:</b>\n"
+            "1. <b>Mathematics:</b> prime numbers, factorials, equations, matrices, integrals.\n"
+            "2. <b>Text Analysis:</b> exact character counts, letter/word frequencies, pattern matching.\n"
+            "3. <b>Statistics & Logic:</b> combinatorics, probability, simulations, sorting.\n"
+            "4. <b>Data & Lists:</b> complex filtering, aggregation, transforms.\n\n"
+            "✍️ <i>Enter your problem, formula, or code to compute:</i>"
+        )
+
+    await safe_answer_callback(callback)
+    await callback.message.answer(
+        intro_text,
+        reply_markup=get_sandbox_cancel_keyboard(lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "chat_action:sandbox_cancel")
+async def handle_chat_action_sandbox_cancel(callback: CallbackQuery, state: FSMContext):
+    """Cancels dedicated sandbox prompt mode and returns to normal chat."""
+    await state.clear()
+    lang_code = callback.from_user.language_code or "ru"
+    cancel_text = (
+        "❌ <b>Режим песочницы отменён.</b>\nВы вернулись в обычный диалог."
+        if lang_code.startswith("ru")
+        else "❌ <b>Sandbox mode cancelled.</b>\nYou returned to normal chat."
+    )
+    await safe_answer_callback(callback)
+    await safe_edit_message_text(callback.message, cancel_text, parse_mode="HTML")
+
+
+

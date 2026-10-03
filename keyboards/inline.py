@@ -92,30 +92,133 @@ def get_set_password_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def get_chat_quick_actions_keyboard(
+    lang_code: str = "ru", enable_code_execution: bool = False
+) -> InlineKeyboardMarkup:
+    """Builds quick action buttons attached to completed assistant response."""
+    regen_text = "🔄 Еще раз" if lang_code == "ru" else "🔄 Regenerate"
+    undo_text = "↩️ Откатить шаг" if lang_code == "ru" else "↩️ Undo turn"
+    sandbox_text = "🐍 В песочницу" if lang_code == "ru" else "🐍 To Sandbox"
+    export_text = "📥 Экспорт диалога" if lang_code == "ru" else "📥 Export Dialogue"
+
+    row2 = []
+    if enable_code_execution:
+        row2.append(InlineKeyboardButton(text=sandbox_text, callback_data="chat_action:sandbox"))
+    row2.append(InlineKeyboardButton(text=export_text, callback_data="chat_action:export"))
+
+    buttons = [
+        [
+            InlineKeyboardButton(text=regen_text, callback_data="chat_action:regen"),
+            InlineKeyboardButton(text=undo_text, callback_data="chat_action:undo"),
+        ],
+        row2,
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_sandbox_cancel_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds cancel button for dedicated Python sandbox prompt mode."""
+    cancel_text = "❌ Отмена" if lang_code == "ru" else "❌ Cancel"
+    buttons = [
+        [InlineKeyboardButton(text=cancel_text, callback_data="chat_action:sandbox_cancel")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_streaming_stop_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds live stop button for active streaming message."""
+    stop_text = "⏹️ Стоп" if lang_code == "ru" else "⏹️ Stop"
+    buttons = [
+        [InlineKeyboardButton(text=stop_text, callback_data="chat_action:stop")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def get_settings_keyboard(
     current_model: str,
     current_style: str,
     current_persona: str,
     has_api_key: bool,
     lang_code: str = "ru",
+    current_format: str = "rich",
+    current_header_style: str = "blockquote",
+    current_thinking_budget: int = 1024,
+    current_session_ttl: int = 60,
+    code_execution_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """Builds settings menu keyboard."""
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
+        key_action = "🔑 Сменить API-ключ" if has_api_key else "🔑 Установить API-ключ"
+        key_label = f"{key_action} ({key_status})"
         lang_label = "🌐 Язык: 🇷🇺 Русский"
         model_label = f"🤖 Модель: {current_model}"
         persona_label = f"🎭 Персона: {current_persona}"
         style_label = f"🎨 Стиль: {current_style}"
-        key_label = f"🔑 API-ключ ({key_status})"
+        if current_thinking_budget == 0:
+            thinking_label = "🧠 Размышления: ⚡ Мгновенно"
+        elif current_thinking_budget == 4096:
+            thinking_label = "🧠 Размышления: 🔬 Глубокий"
+        else:
+            thinking_label = "🧠 Размышления: ⚖️ Баланс"
+
+        if current_session_ttl == 15:
+            ttl_val = "15 мин"
+        elif current_session_ttl == 480:
+            ttl_val = "8 ч"
+        elif current_session_ttl == 1440:
+            ttl_val = "24 ч"
+        else:
+            ttl_val = "1 час"
+        ttl_label = f"⏱️ Сессия: {ttl_val}"
+
+        code_exec_status = "🟢 Вкл" if code_execution_enabled else "🔴 Выкл"
+        code_exec_label = f"🐍 Песочница Python: {code_exec_status}"
+
+        format_label = "⚡ Формат: Rich (10.1+)" if current_format == "rich" else "📝 Формат: Классический"
+        if current_header_style == "expandable":
+            header_label = "📌 Шапка: 🔽 Под спойлером"
+        elif current_header_style == "hidden":
+            header_label = "📌 Шапка: 🚫 Скрыта"
+        else:
+            header_label = "📌 Шапка: ▎ Цитата"
         panic_label = "🚨 Настроить паник-пароль"
         back_label = "⬅️ В главное меню"
     else:
         key_status = "✅ Set" if has_api_key else "❌ Not set"
+        key_action = "🔑 Change API Key" if has_api_key else "🔑 Set API Key"
+        key_label = f"{key_action} ({key_status})"
         lang_label = "🌐 Language: 🇬🇧 English"
         model_label = f"🤖 Model: {current_model}"
         persona_label = f"🎭 Persona: {current_persona}"
         style_label = f"🎨 Style: {current_style}"
-        key_label = f"🔑 API Key ({key_status})"
+        if current_thinking_budget == 0:
+            thinking_label = "🧠 Thinking: ⚡ Instant"
+        elif current_thinking_budget == 4096:
+            thinking_label = "🧠 Thinking: 🔬 Deep"
+        else:
+            thinking_label = "🧠 Thinking: ⚖️ Balanced"
+
+        if current_session_ttl == 15:
+            ttl_val = "15 mins"
+        elif current_session_ttl == 480:
+            ttl_val = "8 hours"
+        elif current_session_ttl == 1440:
+            ttl_val = "24 hours"
+        else:
+            ttl_val = "1 hour"
+        ttl_label = f"⏱️ Session: {ttl_val}"
+
+        code_exec_status = "🟢 On" if code_execution_enabled else "🔴 Off"
+        code_exec_label = f"🐍 Python Sandbox: {code_exec_status}"
+
+        format_label = "⚡ Format: Rich (10.1+)" if current_format == "rich" else "📝 Format: Classic (Markdown)"
+        if current_header_style == "expandable":
+            header_label = "📌 Header: 🔽 Under spoiler"
+        elif current_header_style == "hidden":
+            header_label = "📌 Header: 🚫 Hidden"
+        else:
+            header_label = "📌 Header: ▎ Blockquote"
         panic_label = "🚨 Configure Panic Password"
         back_label = "⬅️ Main Menu"
 
@@ -123,10 +226,95 @@ def get_settings_keyboard(
         [InlineKeyboardButton(text=model_label, callback_data="settings_models")],
         [InlineKeyboardButton(text=persona_label, callback_data="settings_personas")],
         [InlineKeyboardButton(text=style_label, callback_data="settings_styles")],
+        [InlineKeyboardButton(text=thinking_label, callback_data="settings_thinking")],
+        [InlineKeyboardButton(text=code_exec_label, callback_data="settings_toggle_code_exec")],
+        [InlineKeyboardButton(text=ttl_label, callback_data="settings_ttl")],
+        [InlineKeyboardButton(text=format_label, callback_data="settings_format")],
+        [InlineKeyboardButton(text=header_label, callback_data="settings_header")],
         [InlineKeyboardButton(text=key_label, callback_data="settings_api_key")],
         [InlineKeyboardButton(text=lang_label, callback_data="settings_language")],
         [InlineKeyboardButton(text=panic_label, callback_data="settings_panic")],
         [InlineKeyboardButton(text=back_label, callback_data="back_to_main"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_session_ttl_keyboard(current_ttl: int = 60, lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds session TTL (inactivity timeout) selector keyboard."""
+    c15 = "✅ " if current_ttl == 15 else ""
+    c60 = "✅ " if current_ttl == 60 else ""
+    c480 = "✅ " if current_ttl == 480 else ""
+    c1440 = "✅ " if current_ttl == 1440 else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    t15 = f"{c15}⏱️ 15 минут" if lang_code == "ru" else f"{c15}⏱️ 15 mins"
+    t60 = f"{c60}🕐 1 час" if lang_code == "ru" else f"{c60}🕐 1 hour"
+    t480 = f"{c480}💼 8 часов" if lang_code == "ru" else f"{c480}💼 8 hours"
+    t1440 = f"{c1440}🌙 24 часа" if lang_code == "ru" else f"{c1440}🌙 24 hours"
+
+    buttons = [
+        [InlineKeyboardButton(text=t15, callback_data="set_ttl:15")],
+        [InlineKeyboardButton(text=t60, callback_data="set_ttl:60")],
+        [InlineKeyboardButton(text=t480, callback_data="set_ttl:480")],
+        [InlineKeyboardButton(text=t1440, callback_data="set_ttl:1440")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_thinking_budget_keyboard(current_budget: int = 1024, lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds thinking budget selector keyboard."""
+    c0 = "✅ " if current_budget == 0 else ""
+    c1024 = "✅ " if current_budget == 1024 else ""
+    c4096 = "✅ " if current_budget == 4096 else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    t0 = f"{c0}⚡ 0 (Мгновенно)" if lang_code == "ru" else f"{c0}⚡ 0 (Instant)"
+    t1024 = f"{c1024}⚖️ 1024 (Баланс)" if lang_code == "ru" else f"{c1024}⚖️ 1024 (Balanced)"
+    t4096 = f"{c4096}🔬 4096 (Глубокий анализ)" if lang_code == "ru" else f"{c4096}🔬 4096 (Deep Analysis)"
+
+    buttons = [
+        [InlineKeyboardButton(text=t0, callback_data="set_thinking:0")],
+        [InlineKeyboardButton(text=t1024, callback_data="set_thinking:1024")],
+        [InlineKeyboardButton(text=t4096, callback_data="set_thinking:4096")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_format_keyboard(current_format: str = "rich", lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds format selection keyboard (Rich Messages vs Classic Markdown)."""
+    rich_check = "✅ " if current_format == "rich" else ""
+    classic_check = "✅ " if current_format == "markdown" else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    rich_text = f"{rich_check}⚡ Rich Messages (таблицы, LaTeX, 10.1+)" if lang_code == "ru" else f"{rich_check}⚡ Rich Messages (tables, LaTeX, 10.1+)"
+    classic_text = f"{classic_check}📝 Классический (Markdown)" if lang_code == "ru" else f"{classic_check}📝 Classic (Markdown)"
+
+    buttons = [
+        [InlineKeyboardButton(text=rich_text, callback_data="set_format:rich")],
+        [InlineKeyboardButton(text=classic_text, callback_data="set_format:markdown")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_header_style_keyboard(current_style: str = "blockquote", lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds header style selection keyboard (Blockquote vs Expandable spoiler vs Hidden)."""
+    quote_check = "✅ " if current_style == "blockquote" else ""
+    expand_check = "✅ " if current_style == "expandable" else ""
+    hidden_check = "✅ " if current_style == "hidden" else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    quote_text = f"{quote_check}▎ Открытая цитата (Вариант 1)" if lang_code == "ru" else f"{quote_check}▎ Standard Quote (Option 1)"
+    expand_text = f"{expand_check}🔽 Сворачивать под спойлер" if lang_code == "ru" else f"{expand_check}🔽 Collapse Under Spoiler"
+    hidden_text = f"{hidden_check}🚫 Скрыть шапку" if lang_code == "ru" else f"{hidden_check}🚫 Hide Header"
+
+    buttons = [
+        [InlineKeyboardButton(text=quote_text, callback_data="set_header_style:blockquote")],
+        [InlineKeyboardButton(text=expand_text, callback_data="set_header_style:expandable")],
+        [InlineKeyboardButton(text=hidden_text, callback_data="set_header_style:hidden")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -145,14 +333,22 @@ def get_language_keyboard(current_lang: str = "ru", lang_code: str = "ru") -> In
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_api_key_input_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
-    """Builds keyboard for API key entry."""
-    btn_text = "⌨️ Ввести ключ в чате" if lang_code == "ru" else "⌨️ Enter key in chat"
+def get_api_key_input_keyboard(has_api_key: bool = False, lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds keyboard for API key entry and management."""
+    if has_api_key:
+        btn_text = "⌨️ Ввести новый ключ в чате" if lang_code == "ru" else "⌨️ Enter new key in chat"
+        del_text = "🗑️ Удалить API-ключ" if lang_code == "ru" else "🗑️ Delete API key"
+    else:
+        btn_text = "⌨️ Ввести ключ в чате" if lang_code == "ru" else "⌨️ Enter key in chat"
+        del_text = None
+
     back_text = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
     buttons = [
         [InlineKeyboardButton(text=btn_text, callback_data="api_key_chat_input")],
-        [InlineKeyboardButton(text=back_text, callback_data="menu_settings"), get_close_button(lang_code)],
     ]
+    if del_text:
+        buttons.append([InlineKeyboardButton(text=del_text, callback_data="api_key_delete")])
+    buttons.append([InlineKeyboardButton(text=back_text, callback_data="menu_settings"), get_close_button(lang_code)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -242,6 +438,26 @@ def get_documents_list_keyboard(documents: List[Dict[str, Any]], lang_code: str 
         ])
     back_text = "⬅️ Назад в память" if lang_code == "ru" else "⬅️ Back to Memory"
     buttons.append([InlineKeyboardButton(text=back_text, callback_data="menu_memory"), get_close_button(lang_code)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_dialog_menu_keyboard(dialog_id: int, lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds dialog actions menu keyboard (export, switch, rename, delete)."""
+    export_text = "📥 Экспорт в Markdown" if lang_code == "ru" else "📥 Export to Markdown"
+    switch_text = "🟢 Выбрать" if lang_code == "ru" else "🟢 Switch to"
+    rename_text = "✏️ Переименовать" if lang_code == "ru" else "✏️ Rename"
+    delete_text = "🗑️ Удалить" if lang_code == "ru" else "🗑️ Delete"
+    back_text = "⬅️ К списку диалогов" if lang_code == "ru" else "⬅️ Back to Dialogs"
+
+    buttons = [
+        [InlineKeyboardButton(text=export_text, callback_data=f"dialog_export:{dialog_id}")],
+        [
+            InlineKeyboardButton(text=switch_text, callback_data=f"dialog_switch:{dialog_id}"),
+            InlineKeyboardButton(text=rename_text, callback_data=f"dialog_rename_prompt:{dialog_id}"),
+        ],
+        [InlineKeyboardButton(text=delete_text, callback_data=f"dialog_delete:{dialog_id}")],
+        [InlineKeyboardButton(text=back_text, callback_data="dialog_list"), get_close_button(lang_code)],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

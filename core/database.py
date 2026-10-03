@@ -82,9 +82,10 @@ async def init_db() -> None:
     await _migrate_missing_columns()
 
 
-async def _migrate_missing_columns() -> None:
+async def _migrate_missing_columns(db_engine=None) -> None:
     """Safely adds missing columns if an existing v1 database is loaded."""
-    async with engine.begin() as conn:
+    target_engine = db_engine or engine
+    async with target_engine.begin() as conn:
         # Check users table
         user_cols_res = await conn.execute(text("PRAGMA table_info(users)"))
         existing_user_cols = {row[1] for row in user_cols_res.fetchall()}
@@ -100,6 +101,11 @@ async def _migrate_missing_columns() -> None:
             "panic_password_hash": "BLOB",
             "subscription_status": "TEXT DEFAULT 'none' NOT NULL",
             "subscription_end_date": "TEXT",
+            "message_format": "TEXT DEFAULT 'rich' NOT NULL",
+            "header_style": "TEXT DEFAULT 'blockquote' NOT NULL",
+            "thinking_budget": "INTEGER DEFAULT 1024 NOT NULL",
+            "session_ttl_minutes": "INTEGER DEFAULT 60 NOT NULL",
+            "enable_code_execution": "BOOLEAN DEFAULT 0 NOT NULL",
         }
 
         for col, col_def in user_column_specs.items():
