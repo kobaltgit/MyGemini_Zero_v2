@@ -28,7 +28,7 @@ from keyboards.inline import (
     get_main_menu_keyboard,
     get_close_button,
 )
-from keyboards.reply import get_locked_reply_keyboard, get_setup_reply_keyboard
+from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard, get_setup_reply_keyboard
 from core.config import settings, BOT_STYLES, BOT_PERSONAS, SUBSCRIPTION_PLANS
 from core.localization import get_text
 from core.logger import get_logger
@@ -113,27 +113,91 @@ async def handle_user_message(message: Message, bot: Bot):
             user_repo = UserRepository(session)
             has_password = await user_repo.is_master_password_set(user_id)
 
-        if not has_password:
-            prompt = (
-                "🔐 <b>Установите мастер-пароль.</b>\n\n"
-                "Для создания зашифрованного хранилища и общения с AI задайте ваш мастер-пароль:"
-                if lang_code == "ru"
-                else "🔐 <b>Set master password.</b>\n\n"
-                "To initialize your encrypted vault and chat with AI, set your master password:"
-            )
-            await message.answer(
-                prompt,
-                reply_markup=get_set_password_keyboard(lang_code),
-                parse_mode="HTML",
-            )
-            try:
-                await message.answer(
-                    "🔐 Задайте мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Set master password in window or chat:",
-                    reply_markup=get_setup_reply_keyboard(lang_code),
+            if not has_password:
+                prompt = (
+                    "🔐 <b>Установите мастер-пароль.</b>\n\n"
+                    "Для создания зашифрованного хранилища и общения с AI задайте ваш мастер-пароль:"
+                    if lang_code == "ru"
+                    else "🔐 <b>Set master password.</b>\n\n"
+                    "To initialize your encrypted vault and chat with AI, set your master password:"
                 )
-            except Exception:
-                pass
-            return
+                await message.answer(
+                    prompt,
+                    reply_markup=get_set_password_keyboard(lang_code),
+                    parse_mode="HTML",
+                )
+                try:
+                    await message.answer(
+                        "🔐 Задайте мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Set master password in window or chat:",
+                        reply_markup=get_setup_reply_keyboard(lang_code),
+                    )
+                except Exception:
+                    pass
+                return
+
+            candidate = user_text.strip()
+            if candidate:
+                from handlers.auth import safe_instant_delete
+                await safe_instant_delete(message)
+
+                # 1.1 Check panic password first
+                if await user_repo.verify_panic_password(user_id, candidate):
+                    conv_repo = ConversationRepository(session)
+                    await conv_repo.clear_user_data(user_id)
+                    session_manager.lock_session(user_id)
+                    panic_text = (
+                        "🚨 <b>Аварийный сброс выполнен.</b>\n"
+                        "Все диалоги, сообщения, профиль и ключи были безвозвратно удалены из базы данных."
+                        if lang_code == "ru"
+                        else "🚨 <b>Emergency wipe executed.</b>\n"
+                        "All dialogues, messages, profile, and keys have been permanently wiped."
+                    )
+                    await message.answer(panic_text, reply_markup=get_locked_reply_keyboard(lang_code), parse_mode="HTML")
+                    return
+
+                # 1.2 Check master password (on-the-fly unlock)
+                if await user_repo.verify_master_password(user_id, candidate):
+                    from core.crypto import get_fernet_instance
+                    salt = await user_repo.get_salt(user_id)
+                    fernet_inst = get_fernet_instance(candidate, salt)
+                    session_manager.unlock_session(user_id, fernet_inst)
+
+                    is_admin = (user_id == settings.ADMIN_USER_ID)
+                    unlock_text = (
+                        "🔓 <b>Сейф успешно разблокирован!</b>\n\n"
+                        "Ключи расшифровки загружены в память. Диалоги готовы к продолжению."
+                        if lang_code == "ru"
+                        else "🔓 <b>Vault unlocked successfully!</b>\n\n"
+                        "Decryption keys loaded into memory. Dialogues are ready."
+                    )
+                    await message.answer(
+                        unlock_text,
+                        reply_markup=get_main_reply_keyboard(is_admin=is_admin, lang_code=lang_code),
+                        parse_mode="HTML",
+                    )
+                    return
+
+                # 1.3 Incorrect password entered
+                fail_text = (
+                    "❌ <b>Неверный мастер-пароль!</b>\n\n"
+                    "Сообщение удалено для безопасности. Попробуйте ещё раз:"
+                    if lang_code == "ru"
+                    else "❌ <b>Incorrect master password!</b>\n\n"
+                    "Message deleted for safety. Please try again:"
+                )
+                await message.answer(
+                    fail_text,
+                    reply_markup=get_unlock_keyboard(lang_code),
+                    parse_mode="HTML",
+                )
+                try:
+                    await message.answer(
+                        "🔐 Введите мастер-пароль в окне или в чате:" if lang_code == "ru" else "🔐 Enter master password in window or chat:",
+                        reply_markup=get_locked_reply_keyboard(lang_code),
+                    )
+                except Exception:
+                    pass
+                return
 
         prompt = (
             "🔒 <b>Хранилище заблокировано.</b>\n\n"

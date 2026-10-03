@@ -199,6 +199,46 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Тест", content)
         self.assertIn("Привет", content)
 
+    async def test_chat_password_unlock_on_the_fly(self):
+        """Verifies on-the-fly password interception in chat when vault is locked."""
+        from handlers.chat import handle_user_message
+        from core.database import init_db, async_session_maker
+        from database.repositories import UserRepository
+        from middlewares.auth import session_manager
+
+        await init_db()
+        test_uid = 888777
+        session_manager.lock_session(test_uid)
+
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            await repo.add_or_update_user(user_id=test_uid, username="chat_pwd_test", first_name="Pass", last_name="Test")
+            await repo.set_master_password(test_uid, "my_super_secret_pwd")
+
+        self.assertFalse(session_manager.is_unlocked(test_uid))
+
+        # Simulate user sending password directly into chat
+        mock_msg = AsyncMock()
+        mock_msg.from_user.id = test_uid
+        mock_msg.from_user.language_code = "ru"
+        mock_msg.text = "my_super_secret_pwd"
+        mock_msg.caption = None
+        mock_msg.photo = None
+        mock_msg.voice = None
+        mock_msg.document = None
+
+        mock_bot = AsyncMock()
+        await handle_user_message(mock_msg, mock_bot)
+
+        # Must be unlocked now!
+        self.assertTrue(session_manager.is_unlocked(test_uid))
+        # Sensitive message must have been deleted
+        self.assertTrue(mock_msg.delete.called)
+        # Bot should have answered with unlock success
+        self.assertTrue(mock_msg.answer.called)
+        answer_text = mock_msg.answer.call_args.args[0]
+        self.assertIn("разблокирован", answer_text.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

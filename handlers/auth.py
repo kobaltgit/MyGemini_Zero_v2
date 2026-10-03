@@ -215,11 +215,13 @@ async def handle_webapp_data(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "vault_lock")
-async def handle_vault_lock(callback: CallbackQuery):
+async def handle_vault_lock(callback: CallbackQuery, state: FSMContext | None = None):
     """Locks the vault immediately and purges keys from memory."""
     await safe_answer_callback(callback)
     user_id = callback.from_user.id
     session_manager.lock_session(user_id)
+    if state:
+        await state.set_state(AuthStates.waiting_for_password_unlock)
 
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
@@ -249,6 +251,47 @@ async def handle_vault_lock(callback: CallbackQuery):
         )
     except Exception:
         pass
+
+
+@router.message(F.text.in_(["⌨️ Ввести в чате", "⌨️ Enter in chat"]))
+async def handle_reply_enter_in_chat(message: Message, state: FSMContext):
+    """Handles Reply keyboard button '⌨️ Ввести в чате'."""
+    user_id = message.from_user.id
+    await safe_instant_delete(message)
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+        has_password = await user_repo.is_master_password_set(user_id)
+
+    if not has_password:
+        await state.set_state(AuthStates.waiting_for_password_setup)
+        prompt = (
+            "🔐 <b>Шаг 1 из 2: Задайте мастер-пароль.</b>\n\n"
+            "Введите мастер-пароль (минимум 4 символа).\n"
+            "ℹ️ <i>Сообщение будет мгновенно удалено из чата для безопасности.</i>"
+            if lang_code == "ru"
+            else "🔐 <b>Step 1 of 2: Set master password.</b>\n\n"
+            "Enter master password (minimum 4 characters).\n"
+            "ℹ️ <i>Message will be immediately deleted from chat.</i>"
+        )
+    else:
+        await state.set_state(AuthStates.waiting_for_password_unlock)
+        prompt = (
+            "⌨️ <b>Введите ваш мастер-пароль в чат:</b>\n\n"
+            "ℹ️ <i>Ваше сообщение с паролем будет автоматически удалено ботом через долю секунды, "
+            "чтобы не оставаться в истории переписки.</i>"
+            if lang_code == "ru"
+            else "⌨️ <b>Enter your master password in chat:</b>\n\n"
+            "ℹ️ <i>Your password message will be automatically deleted in a fraction of a second.</i>"
+        )
+
+    await message.answer(
+        prompt,
+        reply_markup=get_cancel_keyboard(callback_data="back_to_main", lang_code=lang_code),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "vault_unlock_chat")

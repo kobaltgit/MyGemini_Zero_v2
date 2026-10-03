@@ -465,6 +465,9 @@ async def handle_logout_command(message: Message, state: FSMContext | None = Non
     auto_delete_user_message(message)
     user_id = message.from_user.id
     session_manager.lock_session(user_id)
+    if state:
+        from handlers.auth import AuthStates
+        await state.set_state(AuthStates.waiting_for_password_unlock)
 
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
