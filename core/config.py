@@ -73,6 +73,7 @@ MODELS_METADATA: Dict[str, Dict[str, bool]] = {
     # Gemini 2.5 series
     "gemini-2.5-flash": {"supports_search": True, "supports_system_instruction": True},
     "gemini-2.5-pro": {"supports_search": True, "supports_system_instruction": True},
+    "gemini-2.5-flash-lite": {"supports_search": False, "supports_system_instruction": True},
     "gemini-2.5-flash-preview-05-20": {"supports_search": False, "supports_system_instruction": True},
     "gemini-2.5-flash-lite-preview-06-17": {"supports_search": False, "supports_system_instruction": True},
     "gemini-2.5-flash-lite-preview-05-20": {"supports_search": False, "supports_system_instruction": True},

@@ -19,6 +19,26 @@ from services.calendar_helper import (
     CALLBACK_CALENDAR_DATE_PREFIX,
     CALLBACK_CALENDAR_MONTH_PREFIX,
 )
+from services.gemini import model_supports_search
+
+
+class TestModelSupportsSearch:
+    """Tests for model_supports_search filtering."""
+
+    def test_flash_lite_search_disabled(self):
+        assert model_supports_search("gemini-2.5-flash-lite") is False
+        assert model_supports_search("gemini-2.0-flash-lite") is False
+        assert model_supports_search("models/gemini-2.5-flash-lite-preview-06-17") is False
+
+    def test_standard_models_search_enabled(self):
+        assert model_supports_search("gemini-2.5-flash") is True
+        assert model_supports_search("gemini-2.5-pro") is True
+        assert model_supports_search("gemini-2.0-flash") is True
+
+    def test_non_gemini_or_specialized_disabled(self):
+        assert model_supports_search("gemini-embedding-001") is False
+        assert model_supports_search("imagen-3.0") is False
+
 
 
 class TestErrorParser:

@@ -45,6 +45,7 @@
 | `BUG-024` | 2026-10-03 | Minor | Tests | Падение test_subscribers_sorting_logic из-за захардкоженной даты подписки 2026-10-01 в прошлом | `Resolved` |
 | `BUG-025` | 2026-10-03 | Major | Auth / Chat | Игнорирование пароля, введенного в чат при заблокированном сейфе, и отсутствие хэндлера кнопки «⌨️ Ввести в чате» | `Resolved` |
 | `BUG-026` | 2026-10-03 | Blocker | Chat / Context | Потеря недавнего контекста диалога: get_dialog_messages выбирал старейшие сообщения (order_by asc limit) вместо последних | `Resolved` |
+| `BUG-027` | 2026-10-03 | Major | Gemini / Tools | Утечка сырого вызова тулов <tool_code ...> в чат Telegram на моделях серии -lite при включенном поиске Google Search | `Resolved` |
 
 ---
 
@@ -214,6 +215,19 @@
 * **Компонент:** Tests / Subscriptions
 * **Описание:** В `tests/test_new_features.py` дата окончания подписки для активного пользователя была захардкожена как `2026-10-01`. При наступлении даты `2026-10-03` метод `is_subscription_active` стал возвращать `False`, приводя к сбою теста `test_subscribers_sorting_logic`.
 * **Решение:** Замена статической даты на динамический расчёт `datetime.now() + timedelta(...)`.
+
+#### [BUG-027] Утечка сырого вызова тулов <tool_code ...> в чат на моделях серии -lite
+* **Дата обнаружения:** 2026-10-03
+* **Критичность:** Major
+* **Статус:** Resolved
+* **Компонент:** Gemini / Tools / Config
+* **Описание:** Модели облегчённой серии `gemini-2.5-flash-lite` (и аналогичные `-lite`) не поддерживают серверное исполнение тулов `google_search` в Gemini API. При передаче `tools=[types.Tool(google_search=...)]` модель вместо генерации ответа возвращает сырой псевдокод исполнения Python: `<tool_code print(google_search.search(queries=[...]))>`. В `core/config.py` модель `gemini-2.5-flash-lite` отсутствовала в словаре `MODELS_METADATA`, а метод `model_supports_search` ошибочно считал её поддерживающей поиск из-за префикса `gemini-`. В итоге при цитировании сообщений или вопросах с поиском пользователю в чат выводился сырой код вызова функции.
+* **Решение:**
+  1. В `core/config.py` добавлена конфигурация для `"gemini-2.5-flash-lite": {"supports_search": False, "supports_system_instruction": True}`.
+  2. В `services/gemini.py` в список исключений `no_search_patterns` добавлен шаблон `"-lite"`.
+  3. В метод стриминга `generate_stream` добавлен предохранительный фильтр отбрасывания чанков с `<tool_code` и `google_search.search`.
+  4. Добавлены модульные тесты в `tests/test_services.py`.
+
 
 
 

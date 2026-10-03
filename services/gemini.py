@@ -38,7 +38,7 @@ def model_supports_search(model_name: str) -> bool:
 
     no_search_patterns = [
         "-image", "-tts", "-transcribe", "embedding", "aqa", "veo", "lyria",
-        "computer-use", "robotics"
+        "computer-use", "robotics", "-lite"
     ]
     if any(p in clean_name for p in no_search_patterns):
         return False
@@ -168,6 +168,9 @@ class GeminiService:
             )
             async for chunk in stream:
                 if chunk.text:
+                    if "<tool_code" in chunk.text or "google_search.search" in chunk.text:
+                        logger.warning(f"Suppressed leaked tool_code chunk: {chunk.text[:80]}")
+                        continue
                     yield chunk.text
 
         except APIError as e:
@@ -191,6 +194,8 @@ class GeminiService:
                     )
                     async for chunk in stream:
                         if chunk.text:
+                            if "<tool_code" in chunk.text or "google_search.search" in chunk.text:
+                                continue
                             yield chunk.text
                     return
                 else:
