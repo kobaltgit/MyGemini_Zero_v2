@@ -40,6 +40,7 @@
 | `FIX-BUG-021` | 2026-09-17 | UI / Mobile | Отложенный delete, is_persistent=False для сворачивания клавиатуры, safe_send_menu и fallback plain text | kobaltgit |
 | `FIX-BUG-022` | 2026-09-17 | UI / WebApp | Восстановлено WebApp-окно ввода мастер-пароля через ReplyKeyboard, добавлено подтверждение при регистрации | kobaltgit |
 | `FIX-BUG-023` | 2026-09-17 | Documentation | Синхронизированы 6 разделов руководства /guide, добавлены алиасы и удалены ссылки на картинки | kobaltgit |
+| `FIX-BUG-024` | 2026-10-03 | Tests | Замена статичной даты 2026-10-01 в test_subscribers_sorting_logic на динамический расчет | kobaltgit |
 
 ---
 
@@ -220,6 +221,17 @@
 * **Верификация (Тестирование):**
   - Расширен юнит-тест `test_guide_manager` в `tests/test_fixes_and_i18n.py` на проверку всех 6 секций на обоих языках (RU и EN).
   - Все 26 тестов успешно пройдены (`Ran 26 tests in 0.402s OK`).
+
+### [FIX-BUG-024] Исправление: Захардкоженная дата окончания подписки в test_subscribers_sorting_logic
+* **Дата закрытия:** 2026-10-03
+* **Затронутые файлы:** `tests/test_new_features.py`
+* **Первопричина (RCA):**
+  В тесте `test_subscribers_sorting_logic` дата окончания подписки тестового активного пользователя была захардкожена строкой `"2026-10-01"`. После наступления реальной даты `2026-10-03` метод `user_repo.is_subscription_active` справедливо определял подписку как просроченную (`False`), вызывая падение ассерта `self.assertTrue(user_repo.is_subscription_active(user_paid_future))`.
+* **Применённое решение:**
+  Переход на вычисление относительных дат через `(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")`.
+* **Верификация (Тестирование):**
+  - Успешный прогон `tests/test_new_features.py` (8 из 8 тестов пройдены).
+  - Сквозной прогон всего набора тестов `pytest tests/` (74 теста пройдены).
 
 ### Шаблон карточки исправления:
 

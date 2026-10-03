@@ -81,9 +81,12 @@ class TestNewFeatures(unittest.TestCase):
         from database.repositories.user_repository import UserRepository
         user_repo = UserRepository(None)
 
-        user_paid_future = User(user_id=1, username="paid1", first_name="Пётр", subscription_status="active", subscription_end_date="2026-10-01")
+        from datetime import datetime, timedelta
+        future_date_1 = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+        future_date_2 = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+        user_paid_future = User(user_id=1, username="paid1", first_name="Пётр", subscription_status="active", subscription_end_date=future_date_1)
         user_expired = User(user_id=2, username="free2", first_name="Иван", subscription_status="active", subscription_end_date="2025-01-01")
-        user_paid_long = User(user_id=3, username="paid3", first_name="Ольга", subscription_status="active", subscription_end_date="2026-11-01")
+        user_paid_long = User(user_id=3, username="paid3", first_name="Ольга", subscription_status="active", subscription_end_date=future_date_2)
 
         self.assertTrue(user_repo.is_subscription_active(user_paid_future))
         self.assertFalse(user_repo.is_subscription_active(user_expired))
