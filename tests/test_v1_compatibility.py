@@ -15,6 +15,8 @@ from database.repositories.conversation_repository import ConversationRepository
 async def test_v1_compatibility():
     db_path = "d:/Projects/active/MyGemini_Zero/database/bot_database.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    from core.database import _migrate_missing_columns
+    await _migrate_missing_columns(engine)
     session_maker = async_sessionmaker(bind=engine, class_=AsyncSession)
 
     async with session_maker() as session:

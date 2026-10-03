@@ -321,6 +321,21 @@ async def handle_user_message(message: Message, bot: Bot):
     if rag_context:
         system_instruction_blocks.append(f"Knowledge Base:\n{rag_context}")
 
+    user_format = getattr(user, "message_format", "rich") or "rich"
+    if user_format == "rich":
+        rich_guidance = (
+            "Formatting guidelines:\n"
+            "- For structured data, tables, comparisons, or numbers, use standard GitHub-Flavored Markdown tables.\n"
+            "- For mathematical expressions, use standard LaTeX ($...$ inline, $$...$$ for display blocks).\n"
+            "- If analyzing step-by-step, wrap intermediate thinking inside <think>...</think> tags."
+            if lang_code == "en" else
+            "Правила форматирования:\n"
+            "- Для структурированных данных, списков характеристик и сравнений свободно используй компактные Markdown-таблицы.\n"
+            "- Для математических выражений используй стандартный синтаксис LaTeX ($...$ инлайн, $$...$$ отдельными блоками).\n"
+            "- Если анализируешь задачу по шагам, оборачивай свои промежуточные размышления в тег <think>...</think>."
+        )
+        system_instruction_blocks.append(rich_guidance)
+
     system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
 
     # 8. Build context header (Dialog, Persona, Model)
@@ -340,6 +355,7 @@ async def handle_user_message(message: Message, bot: Bot):
             f"---\n\n"
         )
         thinking_text = "💭 <i>Думаю...</i>"
+        thinking_summary = "Размышления"
     else:
         context_header = (
             f"• **Dialogue:** `{dialog_title}`\n"
@@ -348,6 +364,7 @@ async def handle_user_message(message: Message, bot: Bot):
             f"---\n\n"
         )
         thinking_text = "💭 <i>Thinking...</i>"
+        thinking_summary = "Reasoning"
 
     # 9. Start streaming response
     placeholder_msg = await message.answer(thinking_text, parse_mode="HTML")
@@ -356,6 +373,8 @@ async def handle_user_message(message: Message, bot: Bot):
         chat_id=message.chat.id,
         initial_message=placeholder_msg,
         header_text=context_header,
+        message_format=user_format,
+        thinking_summary=thinking_summary,
     )
 
     gemini_service = GeminiService(api_key=api_key)

@@ -98,6 +98,7 @@ def get_settings_keyboard(
     current_persona: str,
     has_api_key: bool,
     lang_code: str = "ru",
+    current_format: str = "rich",
 ) -> InlineKeyboardMarkup:
     """Builds settings menu keyboard."""
     if lang_code == "ru":
@@ -107,6 +108,7 @@ def get_settings_keyboard(
         persona_label = f"🎭 Персона: {current_persona}"
         style_label = f"🎨 Стиль: {current_style}"
         key_label = f"🔑 API-ключ ({key_status})"
+        format_label = "⚡ Формат: Rich (10.1+)" if current_format == "rich" else "📝 Формат: Классический"
         panic_label = "🚨 Настроить паник-пароль"
         back_label = "⬅️ В главное меню"
     else:
@@ -116,6 +118,7 @@ def get_settings_keyboard(
         persona_label = f"🎭 Persona: {current_persona}"
         style_label = f"🎨 Style: {current_style}"
         key_label = f"🔑 API Key ({key_status})"
+        format_label = "⚡ Format: Rich (10.1+)" if current_format == "rich" else "📝 Format: Classic (Markdown)"
         panic_label = "🚨 Configure Panic Password"
         back_label = "⬅️ Main Menu"
 
@@ -123,10 +126,28 @@ def get_settings_keyboard(
         [InlineKeyboardButton(text=model_label, callback_data="settings_models")],
         [InlineKeyboardButton(text=persona_label, callback_data="settings_personas")],
         [InlineKeyboardButton(text=style_label, callback_data="settings_styles")],
+        [InlineKeyboardButton(text=format_label, callback_data="settings_format")],
         [InlineKeyboardButton(text=key_label, callback_data="settings_api_key")],
         [InlineKeyboardButton(text=lang_label, callback_data="settings_language")],
         [InlineKeyboardButton(text=panic_label, callback_data="settings_panic")],
         [InlineKeyboardButton(text=back_label, callback_data="back_to_main"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_format_keyboard(current_format: str = "rich", lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds format selection keyboard (Rich Messages vs Classic Markdown)."""
+    rich_check = "✅ " if current_format == "rich" else ""
+    classic_check = "✅ " if current_format == "markdown" else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    rich_text = f"{rich_check}⚡ Rich Messages (таблицы, LaTeX, 10.1+)" if lang_code == "ru" else f"{rich_check}⚡ Rich Messages (tables, LaTeX, 10.1+)"
+    classic_text = f"{classic_check}📝 Классический (Markdown)" if lang_code == "ru" else f"{classic_check}📝 Classic (Markdown)"
+
+    buttons = [
+        [InlineKeyboardButton(text=rich_text, callback_data="set_format:rich")],
+        [InlineKeyboardButton(text=classic_text, callback_data="set_format:markdown")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

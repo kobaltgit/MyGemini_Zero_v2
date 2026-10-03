@@ -130,6 +130,15 @@ class TestUserRepository:
         user = await user_repo.get_by_id(uid)
         assert user_repo.is_subscription_active(user) is True
 
+        # Message format (rich vs markdown)
+        assert user.message_format == "rich"
+        await user_repo.update_message_format(uid, "markdown")
+        user_md = await user_repo.get_by_id(uid)
+        assert user_md.message_format == "markdown"
+        await user_repo.update_message_format(uid, "rich")
+        user_rich = await user_repo.get_by_id(uid)
+        assert user_rich.message_format == "rich"
+
 
 @pytest.mark.asyncio
 class TestDialogRepository:

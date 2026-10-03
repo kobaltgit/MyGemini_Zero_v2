@@ -192,9 +192,12 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw_response, "Привет, мир!")
         self.assertTrue(mock_bot.edit_message_text.called)
         last_call_kwargs = mock_bot.edit_message_text.call_args.kwargs
-        self.assertIn("text", last_call_kwargs)
-        self.assertIn("Тест", last_call_kwargs["text"])
-        self.assertIn("Привет", last_call_kwargs["text"])
+        if "rich_message" in last_call_kwargs:
+            content = last_call_kwargs["rich_message"].html
+        else:
+            content = last_call_kwargs.get("text", "")
+        self.assertIn("Тест", content)
+        self.assertIn("Привет", content)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from keyboards.inline import (
     get_personas_keyboard,
     get_api_key_input_keyboard,
     get_language_keyboard,
+    get_format_keyboard,
     get_unlock_keyboard,
     get_close_button,
 )
@@ -46,15 +47,18 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     cur_style = BOT_STYLES.get(user.bot_style if user else "default", "🤖 По умолчанию")
     persona_dict = BOT_PERSONAS.get(user.active_persona if user else "default", {})
     cur_persona = persona_dict.get("name_ru", "🤖 Обычный") if lang_code == "ru" else persona_dict.get("name_en", "🤖 Normal")
+    cur_format = getattr(user, "message_format", "rich") or "rich"
 
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
         lang_str = "🇷🇺 Русский"
+        fmt_str = "⚡ Rich Messages (10.1+)" if cur_format == "rich" else "📝 Классический (Markdown)"
         text = (
             "⚙️ <b>Настройки AI-ассистента:</b>\n\n"
             f"• <b>Модель:</b> <code>{cur_model}</code>\n"
             f"• <b>Персона:</b> {cur_persona}\n"
             f"• <b>Стиль:</b> {cur_style}\n"
+            f"• <b>Формат:</b> {fmt_str}\n"
             f"• <b>Язык:</b> {lang_str}\n"
             f"• <b>API-ключ:</b> {key_status}\n\n"
             "Выберите параметр для изменения:"
@@ -62,11 +66,13 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     else:
         key_status = "✅ Set" if has_api_key else "❌ Not set"
         lang_str = "🇬🇧 English"
+        fmt_str = "⚡ Rich Messages (10.1+)" if cur_format == "rich" else "📝 Classic (Markdown)"
         text = (
             "⚙️ <b>AI Assistant Settings:</b>\n\n"
             f"• <b>Model:</b> <code>{cur_model}</code>\n"
             f"• <b>Persona:</b> {cur_persona}\n"
             f"• <b>Style:</b> {cur_style}\n"
+            f"• <b>Format:</b> {fmt_str}\n"
             f"• <b>Language:</b> {lang_str}\n"
             f"• <b>API Key:</b> {key_status}\n\n"
             "Select setting to configure:"
@@ -78,6 +84,7 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         current_persona=cur_persona,
         has_api_key=has_api_key,
         lang_code=lang_code,
+        current_format=cur_format,
     )
     return text, keyboard
 
@@ -137,6 +144,66 @@ async def handle_set_language(callback: CallbackQuery):
     except Exception:
         pass
 
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_format")
+async def handle_settings_format(callback: CallbackQuery):
+    """Renders message format switcher."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_format = getattr(user, "message_format", "rich") or "rich"
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        title = (
+            "⚡ <b>Формат вывода сообщений:</b>\n\n"
+            "• <b>Rich Messages (10.1+):</b> Нативные таблицы, формулы LaTeX, "
+            "спойлеры размышлений, лимит до 32 768 символов и плавный стриминг.\n\n"
+            "• <b>Классический (Markdown):</b> Текстовые блоки кода, деление по 3200 символов "
+            "для старых версий Telegram Desktop и сторонних клиентов.\n\n"
+            "Выберите желаемый формат:"
+        )
+    else:
+        title = (
+            "⚡ <b>Message Output Format:</b>\n\n"
+            "• <b>Rich Messages (10.1+):</b> Native tables, LaTeX math equations, "
+            "thinking block spoilers, up to 32,768 characters per message, and smooth streaming.\n\n"
+            "• <b>Classic (Markdown):</b> Text code blocks, 3,200 character chunks "
+            "for outdated Telegram clients.\n\n"
+            "Select desired format:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        title,
+        reply_markup=get_format_keyboard(current_format=cur_format, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("set_format:"))
+async def handle_set_format(callback: CallbackQuery):
+    """Updates user message format preference in DB."""
+    user_id = callback.from_user.id
+    new_format = callback.data.split("set_format:")[1]
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_message_format(user_id=user_id, message_format=new_format)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        ans_text = "Формат изменён на Rich Messages ⚡" if new_format == "rich" else "Формат изменён на Классический 📝"
+    else:
+        ans_text = "Format set to Rich Messages ⚡" if new_format == "rich" else "Format set to Classic Markdown 📝"
+
+    await safe_answer_callback(callback, text=ans_text)
     text, keyboard = await render_settings_view(user_id)
     await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
 

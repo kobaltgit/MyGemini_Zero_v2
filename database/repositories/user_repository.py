@@ -197,8 +197,9 @@ class UserRepository:
         persona: Optional[str] = None,
         language_code: Optional[str] = None,
         active_dialog_id: Optional[int] = None,
+        message_format: Optional[str] = None,
     ) -> None:
-        """Updates user preferences (model, persona, style, language, active dialog)."""
+        """Updates user preferences (model, persona, style, language, active dialog, message format)."""
         values = {}
         if style is not None:
             values["bot_style"] = style
@@ -210,11 +211,19 @@ class UserRepository:
             values["language_code"] = language_code
         if active_dialog_id is not None:
             values["active_dialog_id"] = active_dialog_id
+        if message_format is not None:
+            values["message_format"] = message_format
 
         if values:
             stmt = update(User).where(User.user_id == user_id).values(**values)
             await self.session.execute(stmt)
             await self.session.commit()
+
+    async def update_message_format(self, user_id: int, message_format: str) -> None:
+        """Sets message formatting mode ('rich' or 'markdown') for user."""
+        stmt = update(User).where(User.user_id == user_id).values(message_format=message_format)
+        await self.session.execute(stmt)
+        await self.session.commit()
 
     async def update_subscription(self, user_id: int, status: str, end_date: Optional[str]) -> None:
         """Updates user subscription status and expiry date."""

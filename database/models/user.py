@@ -29,6 +29,7 @@ class User(Base):
     bot_style: Mapped[str] = mapped_column(String, default="default", nullable=False)
     gemini_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     active_persona: Mapped[str] = mapped_column(String, default="default", nullable=False)
+    message_format: Mapped[str] = mapped_column(String, default="rich", nullable=False)
 
     # Zero-Knowledge Security Fields (BLOB)
     master_password_hash: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
