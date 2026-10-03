@@ -341,6 +341,7 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         rich_msg = call_kwargs.get("rich_message")
         self.assertIsNotNone(rich_msg)
         self.assertIn("<blockquote expandable>", rich_msg.html)
+        self.assertIn("<br/>", rich_msg.html)
         self.assertIn("Hello from AI", rich_msg.html)
 
         # 2. Standard blockquote style
@@ -360,6 +361,7 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         rich_msg_q = call_kwargs_q.get("rich_message")
         self.assertIsNotNone(rich_msg_q)
         self.assertIn("<blockquote>", rich_msg_q.html)
+        self.assertIn("<br/>", rich_msg_q.html)
         self.assertNotIn("<blockquote expandable>", rich_msg_q.html)
 
     async def test_user_header_style_repository(self):
@@ -368,7 +370,8 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         from database.repositories import UserRepository
 
         await init_db()
-        test_uid = 888777
+        import time
+        test_uid = int(time.time() * 10000) % 900_000_000 + 100_000_000
         async with async_session_maker() as session:
             repo = UserRepository(session)
             user, _ = await repo.add_or_update_user(

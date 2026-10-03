@@ -14,6 +14,7 @@ Supports:
 
 import time
 import asyncio
+import re
 from typing import Optional, List, Tuple
 from aiohttp import ClientError
 from aiogram import Bot
@@ -130,6 +131,15 @@ class MessageStreamThrottler:
         if not self.completed_messages and self.header_style == "expandable":
             if rich_html.startswith("<blockquote>"):
                 rich_html = rich_html.replace("<blockquote>", "<blockquote expandable>", 1)
+
+        # Ensure line breaks inside <blockquote> are rendered as distinct lines (<br/>)
+        if "<blockquote" in rich_html:
+            def fix_quote_newlines(match: re.Match) -> str:
+                tag = match.group(1)
+                body = match.group(2)
+                return f"{tag}{body.replace(chr(10), '<br/>')}</blockquote>"
+
+            rich_html = re.sub(r"(<blockquote[^>]*>)(.*?)</blockquote>", fix_quote_newlines, rich_html, flags=re.DOTALL)
 
         if not rich_html or (streaming_mode and rich_html == self._last_rendered_html):
             return
