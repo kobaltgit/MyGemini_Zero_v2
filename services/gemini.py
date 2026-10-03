@@ -235,9 +235,40 @@ class GeminiService:
 
             # 1. Quota 429 handling
             if e.code == 429 or "RESOURCE_EXHAUSTED" in err_msg:
-                # Try fallback to gemini-2.5-flash-lite if not already on it
+                # Tier 1: Try fallback to flagship gemini-2.5-flash preserving tools & code execution
+                if model_id != "gemini-2.5-flash" and model_id != "gemini-2.5-flash-lite":
+                    logger.warning(f"Quota exceeded on {model_id}. Attempting primary fallback to gemini-2.5-flash with tools...")
+                    try:
+                        fallback_flash_config = types.GenerateContentConfig(
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                            system_instruction=system_instruction,
+                            tools=tools_config,
+                        )
+                        stream = await self.client.aio.models.generate_content_stream(
+                            model="gemini-2.5-flash",
+                            contents=contents,
+                            config=fallback_flash_config,
+                        )
+                        async for chunk in stream:
+                            if getattr(chunk, "usage_metadata", None):
+                                self.last_usage_metadata = {
+                                    "prompt_tokens": getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                                    "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
+                                    "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
+                                }
+                            content_str = _extract_chunk_content(chunk)
+                            if content_str:
+                                chunk_obj = StreamChunk(content_str)
+                                chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
+                                yield chunk_obj
+                        return
+                    except APIError as flash_err:
+                        logger.warning(f"Fallback to gemini-2.5-flash failed ({flash_err.code}). Trying lite...")
+
+                # Tier 2: Emergency fallback to gemini-2.5-flash-lite (pure text without tools)
                 if model_id != "gemini-2.5-flash-lite":
-                    logger.warning(f"Quota exceeded on {model_id}. Attempting fallback to gemini-2.5-flash-lite...")
+                    logger.warning(f"Quota exceeded. Attempting emergency fallback to gemini-2.5-flash-lite...")
                     fallback_config = types.GenerateContentConfig(
                         temperature=temperature,
                         max_output_tokens=max_output_tokens,
