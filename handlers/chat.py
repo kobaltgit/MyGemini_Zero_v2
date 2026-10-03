@@ -352,7 +352,7 @@ async def handle_user_message(message: Message, bot: Bot):
     # 6. Load conversation history
     async with async_session_maker() as session:
         conv_repo = ConversationRepository(session)
-        history_records = await conv_repo.get_dialog_messages(active_dialog_id, fernet, limit=10)
+        history_records = await conv_repo.get_dialog_messages(active_dialog_id, fernet, limit=20)
 
     # Format history for Gemini SDK
     gemini_contents = []

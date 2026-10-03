@@ -64,18 +64,28 @@ class ConversationRepository:
     ) -> List[Dict[str, Any]]:
         """
         Retrieves message history for a dialog and decrypts the text in-memory.
+        If limit is specified, fetches the most recent messages, returning them
+        in chronological order (oldest to newest).
         If decryption fails (e.g. invalid key), provides a safe placeholder.
         """
-        stmt = (
-            select(Conversation)
-            .where(Conversation.dialog_id == dialog_id)
-            .order_by(Conversation.conversation_id.asc())
-        )
         if limit:
-            stmt = stmt.limit(limit)
-
-        result = await self.session.execute(stmt)
-        conversations = result.scalars().all()
+            stmt = (
+                select(Conversation)
+                .where(Conversation.dialog_id == dialog_id)
+                .order_by(Conversation.conversation_id.desc())
+                .limit(limit)
+            )
+            result = await self.session.execute(stmt)
+            conversations = list(result.scalars().all())
+            conversations.reverse()  # Restore chronological order (oldest to newest)
+        else:
+            stmt = (
+                select(Conversation)
+                .where(Conversation.dialog_id == dialog_id)
+                .order_by(Conversation.conversation_id.asc())
+            )
+            result = await self.session.execute(stmt)
+            conversations = list(result.scalars().all())
 
         decrypted_messages = []
         for c in conversations:

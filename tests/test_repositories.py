@@ -232,6 +232,35 @@ class TestConversationRepository:
         assert wiped_user.master_password_hash is None
         assert wiped_user.api_key is None
 
+    async def test_get_dialog_messages_recent_limit(self, async_session: AsyncSession):
+        """Verifies that get_dialog_messages with limit returns the MOST RECENT messages in chronological order."""
+        user_repo = UserRepository(async_session)
+        dialog_repo = DialogRepository(async_session)
+        conv_repo = ConversationRepository(async_session)
+
+        uid = 555666
+        await user_repo.add_or_update_user(user_id=uid, username="limittest", first_name="Limit", last_name="User")
+        await user_repo.set_master_password(uid, "secret123")
+        salt = await user_repo.get_salt(uid)
+        fernet = get_fernet_instance("secret123", salt)
+
+        dialog = await dialog_repo.create_dialog(uid, "Test Limit Dialog")
+
+        # Add 10 messages sequentially
+        for i in range(1, 11):
+            await conv_repo.add_message(
+                user_id=uid,
+                dialog_id=dialog.dialog_id,
+                role="user" if i % 2 != 0 else "bot",
+                message_text=f"Message {i}",
+                fernet_instance=fernet,
+            )
+
+        # When requesting limit=4, it must return the LAST 4 messages: 7, 8, 9, 10 (chronologically)
+        recent_4 = await conv_repo.get_dialog_messages(dialog.dialog_id, fernet_instance=fernet, limit=4)
+        assert len(recent_4) == 4
+        assert [m["text"] for m in recent_4] == ["Message 7", "Message 8", "Message 9", "Message 10"]
+
 
 @pytest.mark.asyncio
 class TestPaymentAndSettingsRepositories:
