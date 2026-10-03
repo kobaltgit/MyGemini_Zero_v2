@@ -21,6 +21,7 @@ from keyboards.inline import (
     get_api_key_input_keyboard,
     get_language_keyboard,
     get_format_keyboard,
+    get_header_style_keyboard,
     get_unlock_keyboard,
     get_close_button,
 )
@@ -48,17 +49,25 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
     persona_dict = BOT_PERSONAS.get(user.active_persona if user else "default", {})
     cur_persona = persona_dict.get("name_ru", "🤖 Обычный") if lang_code == "ru" else persona_dict.get("name_en", "🤖 Normal")
     cur_format = getattr(user, "message_format", "rich") or "rich"
+    cur_header = getattr(user, "header_style", "blockquote") or "blockquote"
 
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
         lang_str = "🇷🇺 Русский"
         fmt_str = "⚡ Rich Messages (10.1+)" if cur_format == "rich" else "📝 Классический (Markdown)"
+        if cur_header == "expandable":
+            hdr_str = "🔽 Под спойлером"
+        elif cur_header == "hidden":
+            hdr_str = "🚫 Скрыта"
+        else:
+            hdr_str = "▎ Открытая цитата"
         text = (
             "⚙️ <b>Настройки AI-ассистента:</b>\n\n"
             f"• <b>Модель:</b> <code>{cur_model}</code>\n"
             f"• <b>Персона:</b> {cur_persona}\n"
             f"• <b>Стиль:</b> {cur_style}\n"
             f"• <b>Формат:</b> {fmt_str}\n"
+            f"• <b>Шапка:</b> {hdr_str}\n"
             f"• <b>Язык:</b> {lang_str}\n"
             f"• <b>API-ключ:</b> {key_status}\n\n"
             "Выберите параметр для изменения:"
@@ -67,12 +76,19 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         key_status = "✅ Set" if has_api_key else "❌ Not set"
         lang_str = "🇬🇧 English"
         fmt_str = "⚡ Rich Messages (10.1+)" if cur_format == "rich" else "📝 Classic (Markdown)"
+        if cur_header == "expandable":
+            hdr_str = "🔽 Under spoiler"
+        elif cur_header == "hidden":
+            hdr_str = "🚫 Hidden"
+        else:
+            hdr_str = "▎ Standard quote"
         text = (
             "⚙️ <b>AI Assistant Settings:</b>\n\n"
             f"• <b>Model:</b> <code>{cur_model}</code>\n"
             f"• <b>Persona:</b> {cur_persona}\n"
             f"• <b>Style:</b> {cur_style}\n"
             f"• <b>Format:</b> {fmt_str}\n"
+            f"• <b>Header:</b> {hdr_str}\n"
             f"• <b>Language:</b> {lang_str}\n"
             f"• <b>API Key:</b> {key_status}\n\n"
             "Select setting to configure:"
@@ -85,6 +101,7 @@ async def render_settings_view(user_id: int) -> Tuple[str, InlineKeyboardMarkup]
         has_api_key=has_api_key,
         lang_code=lang_code,
         current_format=cur_format,
+        current_header_style=cur_header,
     )
     return text, keyboard
 
@@ -202,6 +219,78 @@ async def handle_set_format(callback: CallbackQuery):
         ans_text = "Формат изменён на Rich Messages ⚡" if new_format == "rich" else "Формат изменён на Классический 📝"
     else:
         ans_text = "Format set to Rich Messages ⚡" if new_format == "rich" else "Format set to Classic Markdown 📝"
+
+    await safe_answer_callback(callback, text=ans_text)
+    text, keyboard = await render_settings_view(user_id)
+    await safe_edit_message_text(callback.message, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "settings_header")
+async def handle_settings_header(callback: CallbackQuery):
+    """Renders header style switcher."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        cur_header = getattr(user, "header_style", "blockquote") or "blockquote"
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        title = (
+            "📌 <b>Отображение шапки контекста (диалог, персона, модель):</b>\n\n"
+            "• <b>▎ Открытая цитата (Вариант 1):</b> Нативная вертикальная плашка Telegram "
+            "со строками в аккуратный столбик.\n\n"
+            "• <b>🔽 Сворачивать под спойлер:</b> Нативная сворачиваемая цитата "
+            "(нажмите на стрелочку, чтобы развернуть инфо).\n\n"
+            "• <b>🚫 Скрыть шапку:</b> Максимальный минимализм — вывод только ответа модели.\n\n"
+            "Выберите желаемый вариант:"
+        )
+    else:
+        title = (
+            "📌 <b>Context Header Display (dialogue, persona, model):</b>\n\n"
+            "• <b>▎ Standard Quote (Option 1):</b> Telegram native vertical quote bar "
+            "with neat stacked lines.\n\n"
+            "• <b>🔽 Collapse Under Spoiler:</b> Expandable blockquote "
+            "(tap the arrow to expand info).\n\n"
+            "• <b>🚫 Hide Header:</b> Minimalist output — only the model's answer is shown.\n\n"
+            "Select desired option:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        title,
+        reply_markup=get_header_style_keyboard(current_style=cur_header, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("set_header_style:"))
+async def handle_set_header_style(callback: CallbackQuery):
+    """Updates header style preference in DB."""
+    user_id = callback.from_user.id
+    new_style = callback.data.split("set_header_style:")[1]
+
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_header_style(user_id=user_id, header_style=new_style)
+        user = await user_repo.get_by_id(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        names = {
+            "blockquote": "▎ Открытая цитата",
+            "expandable": "🔽 Сворачиваемая под спойлер",
+            "hidden": "🚫 Скрытая шапка",
+        }
+        ans_text = f"Шапка: {names.get(new_style, new_style)}"
+    else:
+        names = {
+            "blockquote": "▎ Standard Quote",
+            "expandable": "🔽 Collapse Under Spoiler",
+            "hidden": "🚫 Hidden Header",
+        }
+        ans_text = f"Header: {names.get(new_style, new_style)}"
 
     await safe_answer_callback(callback, text=ans_text)
     text, keyboard = await render_settings_view(user_id)

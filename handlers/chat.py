@@ -410,23 +410,28 @@ async def handle_user_message(message: Message, bot: Bot):
 
     persona_title = persona_data.get("name_ru", persona_key) if lang_code == "ru" else persona_data.get("name_en", persona_key)
     model_id = user.gemini_model or settings.DEFAULT_MODEL_ID
+    header_style = getattr(user, "header_style", "blockquote") or "blockquote"
+
+    if header_style == "hidden":
+        context_header = ""
+    else:
+        if lang_code == "ru":
+            context_header = (
+                f"> 💬 **Диалог:** {dialog_title}\n"
+                f"> 🎭 **Персона:** {persona_title}\n"
+                f"> ⚡ **Модель:** {model_id}\n\n"
+            )
+        else:
+            context_header = (
+                f"> 💬 **Dialogue:** {dialog_title}\n"
+                f"> 🎭 **Persona:** {persona_title}\n"
+                f"> ⚡ **Model:** {model_id}\n\n"
+            )
 
     if lang_code == "ru":
-        context_header = (
-            f"• **Диалог:** `{dialog_title}`\n"
-            f"• **Персона:** `{persona_title}`\n"
-            f"• **Модель:** `{model_id}`\n"
-            f"---\n\n"
-        )
         thinking_text = "💭 <i>Думаю...</i>"
         thinking_summary = "Размышления"
     else:
-        context_header = (
-            f"• **Dialogue:** `{dialog_title}`\n"
-            f"• **Persona:** `{persona_title}`\n"
-            f"• **Model:** `{model_id}`\n"
-            f"---\n\n"
-        )
         thinking_text = "💭 <i>Thinking...</i>"
         thinking_summary = "Reasoning"
 
@@ -439,6 +444,7 @@ async def handle_user_message(message: Message, bot: Bot):
         header_text=context_header,
         message_format=user_format,
         thinking_summary=thinking_summary,
+        header_style=header_style,
     )
 
     gemini_service = GeminiService(api_key=api_key)

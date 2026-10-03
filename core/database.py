@@ -102,6 +102,7 @@ async def _migrate_missing_columns(db_engine=None) -> None:
             "subscription_status": "TEXT DEFAULT 'none' NOT NULL",
             "subscription_end_date": "TEXT",
             "message_format": "TEXT DEFAULT 'rich' NOT NULL",
+            "header_style": "TEXT DEFAULT 'blockquote' NOT NULL",
         }
 
         for col, col_def in user_column_specs.items():

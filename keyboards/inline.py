@@ -99,6 +99,7 @@ def get_settings_keyboard(
     has_api_key: bool,
     lang_code: str = "ru",
     current_format: str = "rich",
+    current_header_style: str = "blockquote",
 ) -> InlineKeyboardMarkup:
     """Builds settings menu keyboard."""
     if lang_code == "ru":
@@ -110,6 +111,12 @@ def get_settings_keyboard(
         persona_label = f"🎭 Персона: {current_persona}"
         style_label = f"🎨 Стиль: {current_style}"
         format_label = "⚡ Формат: Rich (10.1+)" if current_format == "rich" else "📝 Формат: Классический"
+        if current_header_style == "expandable":
+            header_label = "📌 Шапка: 🔽 Под спойлером"
+        elif current_header_style == "hidden":
+            header_label = "📌 Шапка: 🚫 Скрыта"
+        else:
+            header_label = "📌 Шапка: ▎ Цитата"
         panic_label = "🚨 Настроить паник-пароль"
         back_label = "⬅️ В главное меню"
     else:
@@ -121,6 +128,12 @@ def get_settings_keyboard(
         persona_label = f"🎭 Persona: {current_persona}"
         style_label = f"🎨 Style: {current_style}"
         format_label = "⚡ Format: Rich (10.1+)" if current_format == "rich" else "📝 Format: Classic (Markdown)"
+        if current_header_style == "expandable":
+            header_label = "📌 Header: 🔽 Under spoiler"
+        elif current_header_style == "hidden":
+            header_label = "📌 Header: 🚫 Hidden"
+        else:
+            header_label = "📌 Header: ▎ Blockquote"
         panic_label = "🚨 Configure Panic Password"
         back_label = "⬅️ Main Menu"
 
@@ -129,6 +142,7 @@ def get_settings_keyboard(
         [InlineKeyboardButton(text=persona_label, callback_data="settings_personas")],
         [InlineKeyboardButton(text=style_label, callback_data="settings_styles")],
         [InlineKeyboardButton(text=format_label, callback_data="settings_format")],
+        [InlineKeyboardButton(text=header_label, callback_data="settings_header")],
         [InlineKeyboardButton(text=key_label, callback_data="settings_api_key")],
         [InlineKeyboardButton(text=lang_label, callback_data="settings_language")],
         [InlineKeyboardButton(text=panic_label, callback_data="settings_panic")],
@@ -149,6 +163,26 @@ def get_format_keyboard(current_format: str = "rich", lang_code: str = "ru") -> 
     buttons = [
         [InlineKeyboardButton(text=rich_text, callback_data="set_format:rich")],
         [InlineKeyboardButton(text=classic_text, callback_data="set_format:markdown")],
+        [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_header_style_keyboard(current_style: str = "blockquote", lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds header style selection keyboard (Blockquote vs Expandable spoiler vs Hidden)."""
+    quote_check = "✅ " if current_style == "blockquote" else ""
+    expand_check = "✅ " if current_style == "expandable" else ""
+    hidden_check = "✅ " if current_style == "hidden" else ""
+    back_label = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
+
+    quote_text = f"{quote_check}▎ Открытая цитата (Вариант 1)" if lang_code == "ru" else f"{quote_check}▎ Standard Quote (Option 1)"
+    expand_text = f"{expand_check}🔽 Сворачивать под спойлер" if lang_code == "ru" else f"{expand_check}🔽 Collapse Under Spoiler"
+    hidden_text = f"{hidden_check}🚫 Скрыть шапку" if lang_code == "ru" else f"{hidden_check}🚫 Hide Header"
+
+    buttons = [
+        [InlineKeyboardButton(text=quote_text, callback_data="set_header_style:blockquote")],
+        [InlineKeyboardButton(text=expand_text, callback_data="set_header_style:expandable")],
+        [InlineKeyboardButton(text=hidden_text, callback_data="set_header_style:hidden")],
         [InlineKeyboardButton(text=back_label, callback_data="menu_settings"), get_close_button(lang_code)],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

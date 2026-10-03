@@ -61,6 +61,7 @@ class MessageStreamThrottler:
         header_text: str = "",
         message_format: str = "rich",
         thinking_summary: str = "Размышления",
+        header_style: str = "blockquote",
     ):
         self.bot = bot
         self.chat_id = chat_id
@@ -68,6 +69,7 @@ class MessageStreamThrottler:
         self.header_text = header_text
         self.message_format = message_format or getattr(settings, "DEFAULT_MESSAGE_FORMAT", "rich")
         self.thinking_summary = thinking_summary
+        self.header_style = header_style or "blockquote"
 
         if throttle_interval is not None:
             self.throttle_interval = throttle_interval
@@ -124,6 +126,10 @@ class MessageStreamThrottler:
             thinking_summary=self.thinking_summary,
             streaming=streaming_mode,
         )
+
+        if not self.completed_messages and self.header_style == "expandable":
+            if rich_html.startswith("<blockquote>"):
+                rich_html = rich_html.replace("<blockquote>", "<blockquote expandable>", 1)
 
         if not rich_html or (streaming_mode and rich_html == self._last_rendered_html):
             return
@@ -207,6 +213,24 @@ class MessageStreamThrottler:
         """Edits message using classic MarkdownV2 / plain text."""
         display_text = raw_text if is_final else f"{raw_text} ▌"
         formatted_text, parse_mode = format_markdown_safe(display_text)
+
+        if not self.completed_messages and self.header_style == "expandable" and parse_mode == "MarkdownV2":
+            if formatted_text.startswith(">"):
+                lines = formatted_text.split("\n")
+                quote_lines = []
+                other_lines = []
+                in_quote = True
+                for line in lines:
+                    if in_quote and (line.startswith(">") or (not line.strip() and quote_lines)):
+                        if line.startswith(">"):
+                            quote_lines.append(line)
+                    else:
+                        in_quote = False
+                        other_lines.append(line)
+                if quote_lines:
+                    joined_quote = "\n".join(quote_lines)
+                    rest = "\n".join(other_lines)
+                    formatted_text = f"**{joined_quote}**\n\n{rest}" if rest else f"**{joined_quote}**"
 
         max_attempts = 4 if is_final else 1
         for attempt in range(1, max_attempts + 1):

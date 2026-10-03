@@ -205,8 +205,9 @@ class UserRepository:
         language_code: Optional[str] = None,
         active_dialog_id: Optional[int] = None,
         message_format: Optional[str] = None,
+        header_style: Optional[str] = None,
     ) -> None:
-        """Updates user preferences (model, persona, style, language, active dialog, message format)."""
+        """Updates user preferences (model, persona, style, language, active dialog, message format, header style)."""
         values = {}
         if style is not None:
             values["bot_style"] = style
@@ -220,6 +221,8 @@ class UserRepository:
             values["active_dialog_id"] = active_dialog_id
         if message_format is not None:
             values["message_format"] = message_format
+        if header_style is not None:
+            values["header_style"] = header_style
 
         if values:
             stmt = update(User).where(User.user_id == user_id).values(**values)
@@ -229,6 +232,12 @@ class UserRepository:
     async def update_message_format(self, user_id: int, message_format: str) -> None:
         """Sets message formatting mode ('rich' or 'markdown') for user."""
         stmt = update(User).where(User.user_id == user_id).values(message_format=message_format)
+        await self.session.execute(stmt)
+        await self.session.commit()
+
+    async def update_header_style(self, user_id: int, header_style: str) -> None:
+        """Sets context header style ('blockquote', 'expandable', 'hidden') for user."""
+        stmt = update(User).where(User.user_id == user_id).values(header_style=header_style)
         await self.session.execute(stmt)
         await self.session.commit()
 

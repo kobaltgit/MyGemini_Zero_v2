@@ -17,6 +17,7 @@ from keyboards.reply import get_main_reply_keyboard, get_locked_reply_keyboard
 from keyboards.inline import (
     get_main_menu_keyboard,
     get_settings_keyboard,
+    get_header_style_keyboard,
     get_documents_list_keyboard,
     get_profile_keyboard,
 )
@@ -290,6 +291,97 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         async with async_session_maker() as session:
             repo = UserRepository(session)
             self.assertFalse(await repo.is_api_key_set(test_uid))
+
+    def test_header_style_keyboards(self):
+        """Verifies get_header_style_keyboard and get_settings_keyboard with header_style."""
+        kb_quote = get_header_style_keyboard(current_style="blockquote", lang_code="ru")
+        self.assertIn("✅", kb_quote.inline_keyboard[0][0].text)
+        self.assertEqual(kb_quote.inline_keyboard[0][0].callback_data, "set_header_style:blockquote")
+
+        kb_expand = get_header_style_keyboard(current_style="expandable", lang_code="ru")
+        self.assertIn("✅", kb_expand.inline_keyboard[1][0].text)
+        self.assertEqual(kb_expand.inline_keyboard[1][0].callback_data, "set_header_style:expandable")
+
+        # In settings keyboard
+        settings_kb = get_settings_keyboard(
+            current_model="gemini-2.5-flash",
+            current_style="🤖 По умолчанию",
+            current_persona="🤖 Обычный",
+            has_api_key=True,
+            lang_code="ru",
+            current_header_style="expandable",
+        )
+        header_btn = next((b[0] for b in settings_kb.inline_keyboard if b[0].callback_data == "settings_header"), None)
+        self.assertIsNotNone(header_btn)
+        self.assertIn("🔽 Под спойлером", header_btn.text)
+
+    async def test_header_style_throttler(self):
+        """Verifies throttler renders blockquote expandable when header_style is expandable."""
+        from services.throttler import MessageStreamThrottler
+
+        bot = AsyncMock()
+        initial_msg = AsyncMock()
+        initial_msg.message_id = 999
+        header = "> 💬 **Диалог:** Main\n> 🎭 **Персона:** Assistant\n> ⚡ **Модель:** Flash\n\n"
+
+        # 1. Expandable style
+        throttler_exp = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=initial_msg,
+            header_text=header,
+            message_format="rich",
+            header_style="expandable",
+        )
+        await throttler_exp.handle_chunk("Hello from AI")
+        await throttler_exp.finalize()
+
+        # Check call args of edit_message_text
+        call_kwargs = bot.edit_message_text.call_args.kwargs
+        rich_msg = call_kwargs.get("rich_message")
+        self.assertIsNotNone(rich_msg)
+        self.assertIn("<blockquote expandable>", rich_msg.html)
+        self.assertIn("Hello from AI", rich_msg.html)
+
+        # 2. Standard blockquote style
+        bot.reset_mock()
+        throttler_quote = MessageStreamThrottler(
+            bot=bot,
+            chat_id=123,
+            initial_message=initial_msg,
+            header_text=header,
+            message_format="rich",
+            header_style="blockquote",
+        )
+        await throttler_quote.handle_chunk("Standard quote output")
+        await throttler_quote.finalize()
+
+        call_kwargs_q = bot.edit_message_text.call_args.kwargs
+        rich_msg_q = call_kwargs_q.get("rich_message")
+        self.assertIsNotNone(rich_msg_q)
+        self.assertIn("<blockquote>", rich_msg_q.html)
+        self.assertNotIn("<blockquote expandable>", rich_msg_q.html)
+
+    async def test_user_header_style_repository(self):
+        """Verifies UserRepository.update_header_style persists preference in DB."""
+        from core.database import init_db, async_session_maker
+        from database.repositories import UserRepository
+
+        await init_db()
+        test_uid = 888777
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            user, _ = await repo.add_or_update_user(
+                user_id=test_uid,
+                username="header_user",
+                first_name="Header",
+                last_name="User",
+            )
+            self.assertEqual(user.header_style, "blockquote")
+
+            await repo.update_header_style(test_uid, "expandable")
+            updated = await repo.get_by_id(test_uid)
+            self.assertEqual(updated.header_style, "expandable")
 
 
 if __name__ == "__main__":
