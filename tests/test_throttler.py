@@ -7,6 +7,7 @@ Unit tests for services/throttler.py:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from aiohttp import ServerDisconnectedError
 from aiogram import Bot
 from aiogram.types import Message, InputRichMessage
 from aiogram.exceptions import TelegramBadRequest
@@ -177,3 +178,60 @@ class TestMessageStreamThrottlerRich:
         # send_rich_message must NOT have been called (no split occurred)
         bot.send_rich_message.assert_not_awaited()
         assert len(throttler.completed_messages) == 1
+
+    async def test_rich_finalize_recovers_from_server_disconnected_error(self):
+        """When edit_message_text encounters ServerDisconnectedError, retry must succeed."""
+        bot = MagicMock(spec=Bot)
+        bot.edit_message_text = AsyncMock(
+            side_effect=[
+                ServerDisconnectedError("Server disconnected"),
+                True,
+            ]
+        )
+
+        msg = MagicMock(spec=Message)
+        msg.message_id = 54324
+
+        throttler = MessageStreamThrottler(
+            bot=bot,
+            chat_id=112233,
+            initial_message=msg,
+            throttle_interval=10.0,
+            message_format="rich",
+        )
+
+        await throttler.handle_chunk("Рад помочь! Чем могу быть полезен?")
+        full_text = await throttler.finalize()
+
+        assert "Рад помочь!" in full_text
+        # First call failed with ServerDisconnectedError, second succeeded on retry
+        assert bot.edit_message_text.await_count == 2
+
+    async def test_rich_finalize_falls_back_to_send_message_if_all_edits_fail(self):
+        """If all edits fail permanently, throttler must send a new message so answer is delivered."""
+        bot = MagicMock(spec=Bot)
+        bot.edit_message_text = AsyncMock(
+            side_effect=ServerDisconnectedError("Server disconnected")
+        )
+        new_sent_msg = MagicMock(spec=Message)
+        new_sent_msg.message_id = 54325
+        bot.send_message = AsyncMock(return_value=new_sent_msg)
+
+        msg = MagicMock(spec=Message)
+        msg.message_id = 54324
+
+        throttler = MessageStreamThrottler(
+            bot=bot,
+            chat_id=112233,
+            initial_message=msg,
+            throttle_interval=10.0,
+            message_format="rich",
+        )
+
+        await throttler.handle_chunk("Ответ, который нельзя потерять")
+        full_text = await throttler.finalize()
+
+        assert full_text == "Ответ, который нельзя потерять"
+        bot.send_message.assert_awaited_once()
+        assert "Ответ, который нельзя потерять" in bot.send_message.call_args.kwargs["text"]
+

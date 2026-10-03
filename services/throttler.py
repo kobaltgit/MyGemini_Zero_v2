@@ -15,9 +15,10 @@ Supports:
 import time
 import asyncio
 from typing import Optional, List, Tuple
+from aiohttp import ClientError
 from aiogram import Bot
 from aiogram.types import Message, InputRichMessage
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter, TelegramNetworkError
 import telegramify_markdown
 from tg_rich_converter import to_rich, split_rich_message
 
@@ -127,69 +128,158 @@ class MessageStreamThrottler:
         if not rich_html or (streaming_mode and rich_html == self._last_rendered_html):
             return
 
-        try:
-            await self.bot.edit_message_text(
-                chat_id=self.chat_id,
-                message_id=self.current_message.message_id,
-                rich_message=InputRichMessage(html=rich_html),
-            )
-            self._last_rendered_html = rich_html
-        except TelegramRetryAfter as e:
-            logger.warning(f"Telegram FloodWait during rich stream ({e.retry_after}s). Sleeping...")
-            await asyncio.sleep(e.retry_after)
-        except TelegramBadRequest as e:
-            err = str(e).lower()
-            if "message is not modified" in err:
-                pass
-            elif "can't parse entities" in err or "tag" in err or "unsupported" in err or "rich" in err:
-                logger.warning(f"Entity parse error in rich edit, attempting cascade plain text fallback: {e}")
-                try:
-                    await self.bot.edit_message_text(
-                        chat_id=self.chat_id,
-                        message_id=self.current_message.message_id,
-                        text=raw_text,
-                        parse_mode=None,
-                    )
-                except Exception:
-                    pass
-            else:
-                logger.warning(f"TelegramBadRequest in edit_message_text: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error in rich stream edit: {e}")
+        max_attempts = 4 if is_final else 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=self.chat_id,
+                    message_id=self.current_message.message_id,
+                    rich_message=InputRichMessage(html=rich_html),
+                )
+                self._last_rendered_html = rich_html
+                return
+            except TelegramRetryAfter as e:
+                logger.warning(f"Telegram FloodWait during rich stream ({e.retry_after}s). Sleeping...")
+                await asyncio.sleep(e.retry_after)
+                if is_final and attempt < max_attempts:
+                    continue
+                elif is_final:
+                    break
+                return
+            except TelegramBadRequest as e:
+                err = str(e).lower()
+                if "message is not modified" in err:
+                    self._last_rendered_html = rich_html
+                    return
+                elif "can't parse entities" in err or "tag" in err or "unsupported" in err or "rich" in err:
+                    logger.warning(f"Entity parse error in rich edit, attempting cascade plain text fallback: {e}")
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=self.chat_id,
+                            message_id=self.current_message.message_id,
+                            text=raw_text,
+                            parse_mode=None,
+                        )
+                        return
+                    except Exception as cascade_err:
+                        logger.warning(f"Cascade plain text edit also failed: {cascade_err}")
+                        if is_final and attempt < max_attempts:
+                            await asyncio.sleep(0.5)
+                            continue
+                        elif is_final:
+                            break
+                        return
+                else:
+                    logger.warning(f"TelegramBadRequest in edit_message_text: {e}")
+                    if is_final:
+                        break
+                    return
+            except (ClientError, TelegramNetworkError, asyncio.TimeoutError) as e:
+                logger.warning(f"Network error in rich stream edit (attempt {attempt}/{max_attempts}): {e}")
+                if is_final and attempt < max_attempts:
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+                elif is_final:
+                    break
+                return
+            except Exception as e:
+                logger.error(f"Unexpected error in rich stream edit (attempt {attempt}/{max_attempts}): {e}")
+                if is_final and attempt < max_attempts:
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+                elif is_final:
+                    break
+                return
+
+        # If finalizing and all edit attempts failed (e.g. permanent network/message issue), ensure delivery via send_message
+        if is_final:
+            logger.warning("All rich edit attempts failed on finalize. Falling back to sending a new message.")
+            try:
+                self.current_message = await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=raw_text,
+                    parse_mode=None,
+                )
+            except Exception as send_err:
+                logger.error(f"Final fallback send_message also failed: {send_err}")
 
     async def _update_legacy_message(self, raw_text: str, is_final: bool) -> None:
         """Edits message using classic MarkdownV2 / plain text."""
         display_text = raw_text if is_final else f"{raw_text} ▌"
         formatted_text, parse_mode = format_markdown_safe(display_text)
 
-        try:
-            await self.bot.edit_message_text(
-                chat_id=self.chat_id,
-                message_id=self.current_message.message_id,
-                text=formatted_text,
-                parse_mode=parse_mode,
-            )
-        except TelegramRetryAfter as e:
-            logger.warning(f"Telegram FloodWait during stream ({e.retry_after}s). Sleeping...")
-            await asyncio.sleep(e.retry_after)
-        except TelegramBadRequest as e:
-            err = str(e).lower()
-            if "message is not modified" in err:
-                pass
-            elif "can't parse entities" in err or "tag" in err:
-                try:
-                    await self.bot.edit_message_text(
-                        chat_id=self.chat_id,
-                        message_id=self.current_message.message_id,
-                        text=display_text,
-                        parse_mode=None,
-                    )
-                except Exception:
-                    pass
-            else:
-                logger.warning(f"TelegramBadRequest in legacy edit_message_text: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error updating legacy stream: {e}")
+        max_attempts = 4 if is_final else 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=self.chat_id,
+                    message_id=self.current_message.message_id,
+                    text=formatted_text,
+                    parse_mode=parse_mode,
+                )
+                return
+            except TelegramRetryAfter as e:
+                logger.warning(f"Telegram FloodWait during stream ({e.retry_after}s). Sleeping...")
+                await asyncio.sleep(e.retry_after)
+                if is_final and attempt < max_attempts:
+                    continue
+                elif is_final:
+                    break
+                return
+            except TelegramBadRequest as e:
+                err = str(e).lower()
+                if "message is not modified" in err:
+                    return
+                elif "can't parse entities" in err or "tag" in err:
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=self.chat_id,
+                            message_id=self.current_message.message_id,
+                            text=display_text,
+                            parse_mode=None,
+                        )
+                        return
+                    except Exception as cascade_err:
+                        logger.warning(f"Legacy cascade plain edit failed: {cascade_err}")
+                        if is_final and attempt < max_attempts:
+                            await asyncio.sleep(0.5)
+                            continue
+                        elif is_final:
+                            break
+                        return
+                else:
+                    logger.warning(f"TelegramBadRequest in legacy edit_message_text: {e}")
+                    if is_final:
+                        break
+                    return
+            except (ClientError, TelegramNetworkError, asyncio.TimeoutError) as e:
+                logger.warning(f"Network error in legacy stream edit (attempt {attempt}/{max_attempts}): {e}")
+                if is_final and attempt < max_attempts:
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+                elif is_final:
+                    break
+                return
+            except Exception as e:
+                logger.error(f"Unexpected error updating legacy stream (attempt {attempt}/{max_attempts}): {e}")
+                if is_final and attempt < max_attempts:
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+                elif is_final:
+                    break
+                return
+
+        # If finalizing and all legacy edit attempts failed, ensure delivery via send_message
+        if is_final:
+            logger.warning("All legacy edit attempts failed on finalize. Falling back to sending a new message.")
+            try:
+                self.current_message = await self.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=display_text,
+                    parse_mode=None,
+                )
+            except Exception as send_err:
+                logger.error(f"Legacy final fallback send_message failed: {send_err}")
 
     async def _split_and_start_new_message(self) -> None:
         """

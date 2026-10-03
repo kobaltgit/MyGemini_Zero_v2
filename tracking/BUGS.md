@@ -46,6 +46,7 @@
 | `BUG-025` | 2026-10-03 | Major | Auth / Chat | Игнорирование пароля, введенного в чат при заблокированном сейфе, и отсутствие хэндлера кнопки «⌨️ Ввести в чате» | `Resolved` |
 | `BUG-026` | 2026-10-03 | Blocker | Chat / Context | Потеря недавнего контекста диалога: get_dialog_messages выбирал старейшие сообщения (order_by asc limit) вместо последних | `Resolved` |
 | `BUG-027` | 2026-10-03 | Major | Gemini / Tools | Утечка сырого вызова тулов <tool_code ...> в чат Telegram на моделях серии -lite при включенном поиске Google Search | `Resolved` |
+| `BUG-028` | 2026-10-03 | Major | Streaming / Network | Обрыв сообщения на промежуточном слоге («Ра») при сетевом сбросе соединения ServerDisconnectedError | `Resolved` |
 
 ---
 
@@ -227,6 +228,18 @@
   2. В `services/gemini.py` в список исключений `no_search_patterns` добавлен шаблон `"-lite"`.
   3. В метод стриминга `generate_stream` добавлен предохранительный фильтр отбрасывания чанков с `<tool_code` и `google_search.search`.
   4. Добавлены модульные тесты в `tests/test_services.py`.
+
+#### [BUG-028] Обрыв сообщения в Telegram при разрыве TCP-соединения (ServerDisconnectedError) в MessageStreamThrottler
+* **Дата обнаружения:** 2026-10-03
+* **Критичность:** Major
+* **Статус:** Resolved
+* **Компонент:** Streaming / Throttler / Network
+* **Описание:** При частых вызовах `edit_message_text` во время потокового вывода Telegram Bot API периодически сбрасывает сетевое TCP-соединение keep-alive, вызывая исключение `ServerDisconnectedError` в aiohttp. В `MessageStreamThrottler` блок `except Exception` логировал ошибку и прекращал попытки отправки без повторов. В результате, когда сбой произошёл на финализации ответа (`finalize()`), сообщение в Telegram осталось «замороженным» на первом промежуточном фрагменте («Ра»), тогда как в базу данных был сохранён полный сгенерированный текст.
+* **Решение:**
+  1. В `_update_rich_message` и `_update_legacy_message` внедрён цикл повторных попыток (до 4 попыток) с экспоненциальной задержкой при сетевых ошибках (`ClientError`, `TelegramNetworkError`, `TimeoutError`) и `TelegramRetryAfter`.
+  2. Добавлен аварийный фоллбэк: если все попытки редактирования при `is_final=True` провалились, бот принудительно отправляет полный ответ новым сообщением (`send_message`), исключая потерю ответа.
+  3. Добавлены unit-тесты в `tests/test_throttler.py`.
+
 
 
 

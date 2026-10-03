@@ -44,6 +44,7 @@
 | `FIX-BUG-025` | 2026-10-03 | Auth / Chat | Восстановлен перехват пароля на лету в чате и обработчик Reply-кнопки «⌨️ Ввести в чате» | kobaltgit |
 | `FIX-BUG-026` | 2026-10-03 | Chat / Context | Исправлена выборка контекста: выборка последних сообщений (desc + reverse) вместо старейших | kobaltgit |
 | `FIX-BUG-027` | 2026-10-03 | Gemini / Tools | Отключение Google Search для серии моделей lite и фильтрация сырого кода <tool_code> | kobaltgit |
+| `FIX-BUG-028` | 2026-10-03 | Streaming / Network | Внедрен цикл ретраев с экспоненциальной задержкой и аварийный send_message фоллбэк в троттлер | kobaltgit |
 
 ---
 
@@ -277,6 +278,19 @@
 * **Верификация (Тестирование):**
   - Добавлен тестовый класс `TestModelSupportsSearch` в `tests/test_services.py`, проверяющий флаги поиска для lite-моделей, стандартных моделей и спецмоделей.
   - Успешный прогон всех 82 тестов `pytest tests/` (100% pass).
+
+### [FIX-BUG-028] Исправление: Обрыв сообщения в Telegram при сбросе TCP-соединения (ServerDisconnectedError)
+* **Дата закрытия:** 2026-10-03
+* **Затронутые файлы:** `services/throttler.py`, `tests/test_throttler.py`
+* **Первопричина (RCA):**
+  Во время потоковой генерации бот каждые 0.8с (Rich) или 1.1с (Legacy) отправляет HTTP POST запросы `editMessageText` на серверы Telegram. Из-за специфики пула соединений `aiohttp.TCPConnector` и keep-alive таймаутов Telegram Bot API периодически сбрасывает соединение, порождая `ServerDisconnectedError: Server disconnected`. В `MessageStreamThrottler._update_rich_message` общее исключение `Exception` логировалось как `Unexpected error in rich stream edit`, после чего выполнение метода просто завершалось. Когда сетевой сброс происходил на финальном шаге `finalize()`, вызов редактирования проваливался, а повторная попытка не предпринималась. В результате сообщение в чате навсегда оставалось в промежуточном состоянии (например, только первые два символа «Ра» первого чанка), хотя модель полностью сгенерировала ответ и он был сохранён в базе данных (420 байт).
+* **Применённое решение:**
+  1. В `services/throttler.py` в методы `_update_rich_message` и `_update_legacy_message` добавлен цикл повторных попыток (до 4 попыток) с прогрессивной задержкой (`0.5 * attempt`) для перехвата `aiohttp.ClientError`, `TelegramNetworkError`, `asyncio.TimeoutError` и ожидания `TelegramRetryAfter`.
+  2. Добавлен аварийный механизм доставки: если на финальном шаге (`is_final=True`) все 4 попытки редактирования сообщения завершились неудачей (например, сообщение удалено или соединение для edit заблокировано), троттлер гарантированно отправляет ответ пользователю новым сообщением через `self.bot.send_message(..., text=raw_text)`.
+  3. В `tests/test_throttler.py` добавлены юнит-тесты: `test_rich_finalize_recovers_from_server_disconnected_error` (проверка восстановления после сброса сокета) и `test_rich_finalize_falls_back_to_send_message_if_all_edits_fail` (проверка аварийной доставки новым сообщением).
+* **Верификация (Тестирование):**
+  - Успешный прогон `pytest tests/test_throttler.py` (9/9 тестов).
+  - Успешный прогон полного набора тестов `pytest tests/` (84/84 теста пройдено со 100% успехом).
 
 ### Шаблон карточки исправления:
 
