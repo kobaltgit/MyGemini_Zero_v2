@@ -239,6 +239,58 @@ class TestAsyncFeatures(unittest.IsolatedAsyncioTestCase):
         answer_text = mock_msg.answer.call_args.args[0]
         self.assertIn("разблокирован", answer_text.lower())
 
+    async def test_api_key_chat_interception_and_settings_delete(self):
+        """Verifies API key interception in chat and deletion in settings."""
+        from handlers.chat import handle_user_message
+        from handlers.settings import handle_api_key_delete
+        from core.database import init_db, async_session_maker
+        from database.repositories import UserRepository
+        from middlewares.auth import session_manager
+        from core.crypto import get_fernet_instance, generate_salt
+
+        await init_db()
+        test_uid = 777666
+        salt = generate_salt()
+        fernet = get_fernet_instance("test_pass", salt)
+        session_manager.unlock_session(test_uid, fernet)
+
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            await repo.add_or_update_user(user_id=test_uid, username="api_key_test", first_name="Api", last_name="Test")
+
+        # Simulate user sending API key into chat
+        mock_msg = AsyncMock()
+        mock_msg.from_user.id = test_uid
+        mock_msg.from_user.language_code = "ru"
+        mock_msg.text = "AIzaSyB1234567890abcdefghijklmnopqrstuvwxyz99"
+        mock_msg.caption = None
+        mock_msg.photo = None
+        mock_msg.voice = None
+        mock_msg.document = None
+
+        mock_bot = AsyncMock()
+        await handle_user_message(mock_msg, mock_bot)
+
+        # Message must have been deleted
+        self.assertTrue(mock_msg.delete.called)
+        # Verify key was encrypted and saved in DB
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            self.assertTrue(await repo.is_api_key_set(test_uid))
+            saved_key = await repo.get_api_key(test_uid, fernet)
+            self.assertEqual(saved_key, "AIzaSyB1234567890abcdefghijklmnopqrstuvwxyz99")
+
+        # Now test delete callback
+        mock_cb = AsyncMock()
+        mock_cb.from_user.id = test_uid
+        mock_cb.message = AsyncMock()
+        mock_cb.answer = AsyncMock()
+        await handle_api_key_delete(mock_cb)
+
+        async with async_session_maker() as session:
+            repo = UserRepository(session)
+            self.assertFalse(await repo.is_api_key_set(test_uid))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,22 @@ class KeyLeakAndAntispamMiddleware(BaseMiddleware):
             text = event.text.strip()
             # Fast check: does it look like a raw Google API key?
             if text.startswith("AIzaSy") and len(text) >= 35 or API_KEY_PATTERN.search(text):
+                raw_state = data.get("raw_state")
+                chat_type = getattr(getattr(event, "chat", None), "type", None)
+
+                # 1. If user is explicitly in the API key input state, pass to handler
+                if raw_state in (
+                    "AuthStates:waiting_for_api_key",
+                    "AuthStates.waiting_for_api_key",
+                ):
+                    return await handler(event, data)
+
+                # 2. In 1-on-1 private chat with the bot, allow handlers/chat.py to
+                # safely intercept, auto-delete from chat history, and encrypt into vault
+                if chat_type == "private":
+                    return await handler(event, data)
+
+                # 3. In group/channel contexts, immediately purge message to prevent public leak
                 try:
                     await asyncio.sleep(0.25)
                     await event.delete()
@@ -40,9 +56,9 @@ class KeyLeakAndAntispamMiddleware(BaseMiddleware):
 
                 await event.answer(
                     "⚠️ <b>Внимание! Безопасность превыше всего.</b>\n\n"
-                    "Обнаружена попытка отправки открытого API-ключа Google в текст чата. "
-                    "Сообщение было немедленно удалено, чтобы ключ не остался в истории переписки.\n\n"
-                    "Пожалуйста, вводите ключ через защищённое всплывающее окно в разделе <b>⚙️ Настройки -> 🔑 Установить API-ключ</b>.",
+                    "Обнаружена попытка отправки открытого API-ключа Google в общий чат. "
+                    "Сообщение было немедленно удалено, чтобы защитить ваши данные.\n\n"
+                    "Пожалуйста, отправляйте ключ только в личные сообщения боту в разделе <b>⚙️ Настройки -> 🔑 Сменить API-ключ</b>.",
                     parse_mode="HTML",
                 )
                 return

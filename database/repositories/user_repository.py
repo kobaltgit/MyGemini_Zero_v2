@@ -182,6 +182,13 @@ class UserRepository:
         user = await self.get_by_id(user_id)
         return user is not None and user.api_key is not None
 
+    async def delete_api_key(self, user_id: int) -> None:
+        """Deletes user's API key by setting it to None in DB."""
+        stmt = update(User).where(User.user_id == user_id).values(api_key=None)
+        await self.session.execute(stmt)
+        await self.session.commit()
+        logger.info(f"API key deleted for user {user_id}", extra={"user_id": user_id})
+
     async def update_session_timestamp(self, user_id: int) -> None:
         """Updates last_session_ts to current timestamp."""
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -103,21 +103,23 @@ def get_settings_keyboard(
     """Builds settings menu keyboard."""
     if lang_code == "ru":
         key_status = "✅ Установлен" if has_api_key else "❌ Не установлен"
+        key_action = "🔑 Сменить API-ключ" if has_api_key else "🔑 Установить API-ключ"
+        key_label = f"{key_action} ({key_status})"
         lang_label = "🌐 Язык: 🇷🇺 Русский"
         model_label = f"🤖 Модель: {current_model}"
         persona_label = f"🎭 Персона: {current_persona}"
         style_label = f"🎨 Стиль: {current_style}"
-        key_label = f"🔑 API-ключ ({key_status})"
         format_label = "⚡ Формат: Rich (10.1+)" if current_format == "rich" else "📝 Формат: Классический"
         panic_label = "🚨 Настроить паник-пароль"
         back_label = "⬅️ В главное меню"
     else:
         key_status = "✅ Set" if has_api_key else "❌ Not set"
+        key_action = "🔑 Change API Key" if has_api_key else "🔑 Set API Key"
+        key_label = f"{key_action} ({key_status})"
         lang_label = "🌐 Language: 🇬🇧 English"
         model_label = f"🤖 Model: {current_model}"
         persona_label = f"🎭 Persona: {current_persona}"
         style_label = f"🎨 Style: {current_style}"
-        key_label = f"🔑 API Key ({key_status})"
         format_label = "⚡ Format: Rich (10.1+)" if current_format == "rich" else "📝 Format: Classic (Markdown)"
         panic_label = "🚨 Configure Panic Password"
         back_label = "⬅️ Main Menu"
@@ -166,14 +168,22 @@ def get_language_keyboard(current_lang: str = "ru", lang_code: str = "ru") -> In
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_api_key_input_keyboard(lang_code: str = "ru") -> InlineKeyboardMarkup:
-    """Builds keyboard for API key entry."""
-    btn_text = "⌨️ Ввести ключ в чате" if lang_code == "ru" else "⌨️ Enter key in chat"
+def get_api_key_input_keyboard(has_api_key: bool = False, lang_code: str = "ru") -> InlineKeyboardMarkup:
+    """Builds keyboard for API key entry and management."""
+    if has_api_key:
+        btn_text = "⌨️ Ввести новый ключ в чате" if lang_code == "ru" else "⌨️ Enter new key in chat"
+        del_text = "🗑️ Удалить API-ключ" if lang_code == "ru" else "🗑️ Delete API key"
+    else:
+        btn_text = "⌨️ Ввести ключ в чате" if lang_code == "ru" else "⌨️ Enter key in chat"
+        del_text = None
+
     back_text = "⬅️ Назад в настройки" if lang_code == "ru" else "⬅️ Back to Settings"
     buttons = [
         [InlineKeyboardButton(text=btn_text, callback_data="api_key_chat_input")],
-        [InlineKeyboardButton(text=back_text, callback_data="menu_settings"), get_close_button(lang_code)],
     ]
+    if del_text:
+        buttons.append([InlineKeyboardButton(text=del_text, callback_data="api_key_delete")])
+    buttons.append([InlineKeyboardButton(text=back_text, callback_data="menu_settings"), get_close_button(lang_code)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

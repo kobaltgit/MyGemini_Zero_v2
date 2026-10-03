@@ -414,32 +414,63 @@ async def handle_set_persona(callback: CallbackQuery):
 
 @router.callback_query(F.data == "settings_api_key")
 async def handle_settings_api_key(callback: CallbackQuery):
-    """Prompts user to enter their API key via chat."""
+    """Prompts user to enter or change their API key via chat."""
+    await safe_answer_callback(callback)
+    user_id = callback.from_user.id
+    async with async_session_maker() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        has_api_key = await user_repo.is_api_key_set(user_id)
+        lang_code = user.language_code if user and user.language_code else "ru"
+
+    if lang_code == "ru":
+        status_text = "✅ <b>Ключ установлен и активен.</b>" if has_api_key else "❌ <b>Ключ ещё не установлен.</b>"
+        action_text = "ввести новый ключ и заменить текущий" if has_api_key else "установить ваш персональный ключ"
+        text = (
+            "🔑 <b>Управление Google Gemini API-ключом</b>\n\n"
+            f"• <b>Текущий статус:</b> {status_text}\n"
+            "• <b>Безопасность:</b> Zero-Knowledge (ключ надёжно зашифрован в базе данных вашим мастер-паролем).\n\n"
+            f"Нажмите кнопку ниже, чтобы {action_text}:"
+        )
+    else:
+        status_text = "✅ <b>Key is set and active.</b>" if has_api_key else "❌ <b>Key is not set yet.</b>"
+        action_text = "enter a new key to replace current" if has_api_key else "set your personal key"
+        text = (
+            "🔑 <b>Google Gemini API Key Management</b>\n\n"
+            f"• <b>Current status:</b> {status_text}\n"
+            "• <b>Security:</b> Zero-Knowledge (key securely encrypted in the database with your master password).\n\n"
+            f"Click the button below to {action_text}:"
+        )
+
+    await safe_edit_message_text(
+        callback.message,
+        text,
+        reply_markup=get_api_key_input_keyboard(has_api_key=has_api_key, lang_code=lang_code),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "api_key_delete")
+async def handle_api_key_delete(callback: CallbackQuery):
+    """Deletes API key for user."""
     await safe_answer_callback(callback)
     user_id = callback.from_user.id
     async with async_session_maker() as session:
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(user_id)
         lang_code = user.language_code if user and user.language_code else "ru"
+        await user_repo.delete_api_key(user_id)
 
-    if lang_code == "ru":
-        text = (
-            "🔑 <b>Установка Google Gemini API-ключа</b>\n\n"
-            "Бот работает по модели <b>BYOK (Bring Your Own Key)</b>. "
-            "Ваш ключ шифруется вашим мастер-паролем в базе данных.\n\n"
-            "Нажмите кнопку ниже, чтобы ввести ключ:"
-        )
-    else:
-        text = (
-            "🔑 <b>Setting Google Gemini API Key</b>\n\n"
-            "The bot operates on the <b>BYOK (Bring Your Own Key)</b> model. "
-            "Your key is encrypted with your master password in the database.\n\n"
-            "Click button below to enter key:"
-        )
-
+    msg = (
+        "🗑️ <b>API-ключ успешно удалён.</b>\n\n"
+        "Вы можете в любой момент установить новый ключ в этом меню."
+        if lang_code == "ru"
+        else "🗑️ <b>API key successfully deleted.</b>\n\n"
+        "You can set a new key at any time in this menu."
+    )
     await safe_edit_message_text(
         callback.message,
-        text,
-        reply_markup=get_api_key_input_keyboard(lang_code=lang_code),
+        msg,
+        reply_markup=get_api_key_input_keyboard(has_api_key=False, lang_code=lang_code),
         parse_mode="HTML",
     )

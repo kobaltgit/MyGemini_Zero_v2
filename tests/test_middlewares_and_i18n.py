@@ -93,6 +93,35 @@ class TestAntispamMiddleware:
         handler.assert_awaited_once_with(event, data)
         assert result == "OK"
 
+    async def test_private_chat_api_key_passes_to_handler(self):
+        """In private chat, API key must pass to handler so it can be encrypted and saved."""
+        middleware = KeyLeakAndAntispamMiddleware()
+        handler = AsyncMock(return_value="SAVED")
+
+        event = MagicMock(spec=Message)
+        event.text = "AIzaSyB1234567890abcdefghijklmnopqrstuvwxyz12"
+        event.chat = MagicMock()
+        event.chat.type = "private"
+        data = {}
+
+        result = await middleware(handler, event, data)
+        handler.assert_awaited_once_with(event, data)
+        assert result == "SAVED"
+
+    async def test_waiting_for_api_key_state_passes_to_handler(self):
+        """When in AuthStates:waiting_for_api_key state, key must pass to handler."""
+        middleware = KeyLeakAndAntispamMiddleware()
+        handler = AsyncMock(return_value="SAVED_FROM_FSM")
+
+        event = MagicMock(spec=Message)
+        event.text = "AIzaSyB1234567890abcdefghijklmnopqrstuvwxyz12"
+        data = {"raw_state": "AuthStates:waiting_for_api_key"}
+
+        result = await middleware(handler, event, data)
+        handler.assert_awaited_once_with(event, data)
+        assert result == "SAVED_FROM_FSM"
+
+
 
 @pytest.mark.asyncio
 class TestAuthMiddleware:
