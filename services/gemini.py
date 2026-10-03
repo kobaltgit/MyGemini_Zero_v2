@@ -173,7 +173,7 @@ class GeminiService:
         tools_config = tools if tools else None
 
         clean_model = model_id.lower().replace("models/", "")
-        is_thinking_model = "gemini-2.5-" in clean_model and "-lite" not in clean_model
+        is_thinking_model = ("gemini-2.5-" in clean_model or "gemini-3." in clean_model) and "-lite" not in clean_model
         thinking_config = (
             types.ThinkingConfig(thinking_budget=thinking_budget, include_thoughts=True)
             if (thinking_budget is not None and is_thinking_model)
@@ -189,6 +189,27 @@ class GeminiService:
             thinking_config=thinking_config,
         )
 
+        def _extract_chunk_content(c: Any) -> str:
+            parts_text = []
+            if getattr(c, "text", None):
+                t = c.text
+                if "<tool_code" not in t and "google_search.search" not in t:
+                    parts_text.append(t)
+            candidates = getattr(c, "candidates", None) or []
+            for cand in candidates:
+                content = getattr(cand, "content", None)
+                if content and getattr(content, "parts", None):
+                    for part in content.parts:
+                        exec_code = getattr(part, "executable_code", None)
+                        if exec_code and getattr(exec_code, "code", None):
+                            code_str = exec_code.code.strip()
+                            parts_text.append(f"\n```python\n{code_str}\n```\n")
+                        exec_res = getattr(part, "code_execution_result", None)
+                        if exec_res and getattr(exec_res, "output", None):
+                            out_str = exec_res.output.strip()
+                            parts_text.append(f"\n```\n[Вывод песочницы / Output]:\n{out_str}\n```\n")
+            return "".join(parts_text)
+
         try:
             stream = await self.client.aio.models.generate_content_stream(
                 model=model_id,
@@ -202,11 +223,9 @@ class GeminiService:
                         "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
                         "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
                     }
-                if chunk.text:
-                    if "<tool_code" in chunk.text or "google_search.search" in chunk.text:
-                        logger.warning(f"Suppressed leaked tool_code chunk: {chunk.text[:80]}")
-                        continue
-                    chunk_obj = StreamChunk(chunk.text)
+                content_str = _extract_chunk_content(chunk)
+                if content_str:
+                    chunk_obj = StreamChunk(content_str)
                     chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
                     yield chunk_obj
 
@@ -236,10 +255,9 @@ class GeminiService:
                                 "candidates_tokens": getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
                                 "total_tokens": getattr(chunk.usage_metadata, "total_token_count", 0) or 0,
                             }
-                        if chunk.text:
-                            if "<tool_code" in chunk.text or "google_search.search" in chunk.text:
-                                continue
-                            chunk_obj = StreamChunk(chunk.text)
+                        content_str = _extract_chunk_content(chunk)
+                        if content_str:
+                            chunk_obj = StreamChunk(content_str)
                             chunk_obj.usage_metadata = getattr(chunk, "usage_metadata", None)
                             yield chunk_obj
                     return

@@ -407,6 +407,19 @@ async def handle_user_message(message: Message, bot: Bot):
         )
         system_instruction_blocks.append(rich_guidance)
 
+    if getattr(user, "enable_code_execution", False):
+        code_exec_guidance = (
+            "Python Code Execution is ENABLED. For any calculations, arithmetic, primes, factorials, "
+            "simulations, counting, or data analysis, you MUST ALWAYS generate and execute Python code using your code_execution tool. "
+            "NEVER guess, estimate, or hallucinate computation results in plain text without running the code."
+            if lang_code == "en" else
+            "Песочница исполнения Python-кода ВКЛЮЧЕНА. При любых математических расчетах, проверке простых чисел, "
+            "факториалах, моделировании, подсчетах или анализе данных ты ОБЯЗАН написать и запустить Python-код "
+            "с помощью встроенного инструмента code_execution. "
+            "Никогда не выдумывай и не пытайся угадать результаты вычислений в тексте без фактического запуска кода в песочнице."
+        )
+        system_instruction_blocks.append(code_exec_guidance)
+
     system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
 
     # 8. Build context header (Dialog, Persona, Model)
@@ -748,6 +761,19 @@ async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
             "- Если анализируешь задачу по шагам, оборачивай свои промежуточные размышления в тег <think>...</think>."
         )
         system_instruction_blocks.append(rich_guidance)
+
+    if getattr(user, "enable_code_execution", False):
+        code_exec_guidance = (
+            "Python Code Execution is ENABLED. For any calculations, arithmetic, primes, factorials, "
+            "simulations, counting, or data analysis, you MUST ALWAYS generate and execute Python code using your code_execution tool. "
+            "NEVER guess, estimate, or hallucinate computation results in plain text without running the code."
+            if lang_code == "en" else
+            "Песочница исполнения Python-кода ВКЛЮЧЕНА. При любых математических расчетах, проверке простых чисел, "
+            "факториалах, моделировании, подсчетах или анализе данных ты ОБЯЗАН написать и запустить Python-код "
+            "с помощью встроенного инструмента code_execution. "
+            "Никогда не выдумывай и не пытайся угадать результаты вычислений в тексте без фактического запуска кода в песочнице."
+        )
+        system_instruction_blocks.append(code_exec_guidance)
 
     system_instruction = "\n\n---\n\n".join(system_instruction_blocks) if system_instruction_blocks else None
 
