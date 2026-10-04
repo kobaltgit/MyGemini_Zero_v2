@@ -146,6 +146,7 @@ async def handle_sandbox_prompt(message: Message, bot: Bot, state: FSMContext):
         "You MUST ALWAYS generate and execute Python code using your code_execution tool for any calculations, "
         "counting, string parsing, sorting, or data analysis. "
         "NEVER guess, estimate, or simulate results in plain text without running the code. "
+        "For definite integrals, differential equations, and complex mathematical functions, prefer fast numerical libraries (scipy.integrate.quad, numpy, math) over heavy symbolic sympy.integrate that may hang and hit sandbox execution timeouts (KeyboardInterrupt). If an analytical answer is requested, provide the symbolic formula in the text and compute the numerical value in code. "
         "Base your final explanation strictly on the actual execution output."
         if lang_code == "en" else
         "Ты — специализированный вычислительный движок на базе Python. Твоя единственная цель — "
@@ -153,6 +154,7 @@ async def handle_sandbox_prompt(message: Message, bot: Bot, state: FSMContext):
         "Для любых расчетов, подсчета символов, слов, частотности, сортировки, обработки списков или математических операций "
         "ты ОБЯЗАН написать и запустить исполняемый код с помощью встроенного инструмента code_execution. "
         "НИКОГДА не угадывай, не выдумывай и не симулируй вывод в тексте без фактического запуска в песочнице. "
+        "Для вычисления определенных интегралов, дифференциальных уравнений и сложных математических функций отдавай предпочтение быстрым численным библиотекам (scipy.integrate.quad, numpy, math), избегая тяжелого символьного sympy.integrate, которое может зависнуть по таймауту (KeyboardInterrupt). Если требуется аналитический ответ, выводи формулу текстом, а в коде выполняй численный расчет. "
         "Свои выводы и объяснения строй строго на базе реального вывода выполнения кода."
     )
 
@@ -650,11 +652,13 @@ async def handle_user_message(message: Message, bot: Bot):
         code_exec_guidance = (
             "Python Code Execution is ENABLED. For any calculations, arithmetic, primes, factorials, "
             "simulations, counting, or data analysis, you MUST ALWAYS generate and execute Python code using your code_execution tool. "
+            "For definite integrals and complex mathematical equations, prefer fast numerical libraries (scipy.integrate.quad, numpy) to avoid sandbox timeouts. "
             "NEVER guess, estimate, or hallucinate computation results in plain text without running the code."
             if lang_code == "en" else
             "Песочница исполнения Python-кода ВКЛЮЧЕНА. При любых математических расчетах, проверке простых чисел, "
             "факториалах, моделировании, подсчетах или анализе данных ты ОБЯЗАН написать и запустить Python-код "
             "с помощью встроенного инструмента code_execution. "
+            "Для определенных интегралов и сложных уравнений отдавай предпочтение scipy/numpy во избежание зависания по таймауту песочницы. "
             "Никогда не выдумывай и не пытайся угадать результаты вычислений в тексте без фактического запуска кода в песочнице."
         )
         system_instruction_blocks.append(code_exec_guidance)
@@ -1016,11 +1020,13 @@ async def handle_chat_action_regen(callback: CallbackQuery, bot: Bot):
         code_exec_guidance = (
             "Python Code Execution is ENABLED. For any calculations, arithmetic, primes, factorials, "
             "simulations, counting, or data analysis, you MUST ALWAYS generate and execute Python code using your code_execution tool. "
+            "For definite integrals and complex mathematical equations, prefer fast numerical libraries (scipy.integrate.quad, numpy) to avoid sandbox timeouts. "
             "NEVER guess, estimate, or hallucinate computation results in plain text without running the code."
             if lang_code == "en" else
             "Песочница исполнения Python-кода ВКЛЮЧЕНА. При любых математических расчетах, проверке простых чисел, "
             "факториалах, моделировании, подсчетах или анализе данных ты ОБЯЗАН написать и запустить Python-код "
             "с помощью встроенного инструмента code_execution. "
+            "Для определенных интегралов и сложных уравнений отдавай предпочтение scipy/numpy во избежание зависания по таймауту песочницы. "
             "Никогда не выдумывай и не пытайся угадать результаты вычислений в тексте без фактического запуска кода в песочнице."
         )
         system_instruction_blocks.append(code_exec_guidance)
